@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>wpt_adjustment_turtlebot</name>
+  <version>0.1.0</version>
+  <description>AprilTag based WPT coil alignment controller for TurtleBot using ROS2 cmd_vel.</description>
+  <maintainer email="271123352+hjinyy@users.noreply.github.com">Hjin</maintainer>
+  <license>MIT</license>
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

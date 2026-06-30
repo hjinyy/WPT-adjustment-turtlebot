@@ -1,0 +1,71 @@
+ros:
+  cmd_vel_topic: /cmd_vel
+
+apriltag:
+  family: tag36h11
+
+safety:
+  dry_run: true
+  tag_lost_timeout_sec: 1.0
+
+cameras:
+  front: {device: 0, width: 640, height: 480}
+  left_bottom: {device: 1, width: 640, height: 480}
+  right_bottom: {device: 2, width: 640, height: 480}
+
+speed:
+  corridor_linear: 0.06
+  shelf_entry_linear: 0.025
+  head_max_linear: 0.05
+  head_max_angular: 0.18
+  head_min_linear: 0.01
+  head_min_angular: 0.02
+  coil_max_linear: 0.015
+  coil_max_angular: 0.08
+  coil_min_linear: 0.004
+  coil_min_angular: 0.015
+
+alignment:
+  stable_frames_required: 10
+  head: {threshold_x_px: 25, threshold_y_px: 25, threshold_angle_deg: 8}
+  coil: {threshold_x_px: 7, threshold_y_px: 7, threshold_angle_deg: 2.0}
+
+control:
+  loop_hz: 10.0
+  head:
+    k_y_to_linear: -0.0006
+    k_x_to_angular: -0.0020
+    k_angle_to_angular: -0.0040
+    x_deadband_px: 10
+    y_deadband_px: 10
+    angle_deadband_deg: 3
+    invert_linear: false
+    invert_angular: false
+  coil:
+    k_y_to_linear: -0.00025
+    k_x_to_angular: -0.0009
+    k_angle_to_angular: -0.0025
+    x_deadband_px: 3
+    y_deadband_px: 3
+    angle_deadband_deg: 0.8
+    invert_linear: false
+    invert_angular: false
+
+shelves:
+  "1":
+    targets:
+      front:
+        head: {x: 320, y: 240, angle_deg: 0}
+        default: {x: 320, y: 240, angle_deg: 0}
+      left_bottom:
+        "11": {x: 320, y: 220, angle_deg: 0}
+        "12": {x: 320, y: 220, angle_deg: 0}
+        "13": {x: 320, y: 220, angle_deg: 0}
+        "14": {x: 320, y: 220, angle_deg: 0}
+        default: {x: 320, y: 220, angle_deg: 0}
+      right_bottom:
+        "11": {x: 320, y: 230, angle_deg: 180}
+        "12": {x: 320, y: 230, angle_deg: 180}
+        "13": {x: 320, y: 230, angle_deg: 180}
+        "14": {x: 320, y: 230, angle_deg: 180}
+        default: {x: 320, y: 230, angle_deg: 180}
