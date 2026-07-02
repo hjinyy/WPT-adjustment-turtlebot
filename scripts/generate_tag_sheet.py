@@ -10,13 +10,19 @@ from __future__ import annotations
 import argparse
 from io import BytesIO
 from pathlib import Path
+import sys
 from urllib.request import urlopen
 
 from PIL import Image, ImageDraw, ImageFont
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from wpt_adjustment_turtlebot.tag_layout import coil_tag_id, head_tag_id
 
 BASE_URL = "https://raw.githubusercontent.com/AprilRobotics/apriltag-imgs/master/tag36h11/tag36_11_{tag_id:05d}.png"
+RESAMPLE_NEAREST = getattr(getattr(Image, "Resampling", Image), "NEAREST")
 
 
 def mm_to_px(mm: float, dpi: int) -> int:
@@ -60,7 +66,7 @@ def generate_sheet(items: list[tuple[str, int]], output_dir: Path, tag_size_mm: 
             row, col = divmod(idx, cols)
             x = margin + col * cell_w
             y = margin + row * cell_h
-            tag = download_tag(tag_id).resize((tag_px, tag_px), Image.Resampling.NEAREST)
+            tag = download_tag(tag_id).resize((tag_px, tag_px), RESAMPLE_NEAREST)
             page.paste(tag, (x, y))
             draw.text((x, y + tag_px + 2), f"ID {tag_id} / {label}", fill="black", font=font)
         png_path = output_dir / f"apriltag_sheet_{page_idx + 1}.png"
