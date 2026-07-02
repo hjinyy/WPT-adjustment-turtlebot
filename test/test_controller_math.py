@@ -8,7 +8,15 @@ from wpt_adjustment_turtlebot.controller_math import (
     compute_pair_observation,
     is_aligned,
 )
-from wpt_adjustment_turtlebot.tag_layout import coil_pair_ids, coil_tag_id, decode_coil_tag, head_tag_id
+from wpt_adjustment_turtlebot.tag_layout import (
+    coil_pair_ids,
+    coil_tag_id,
+    decode_coil_tag,
+    decode_station_tag,
+    head_tag_id,
+    station_pair_ids,
+    station_tag_id,
+)
 
 
 def test_tag_id_rules():
@@ -20,6 +28,19 @@ def test_tag_id_rules():
     assert coil_tag_id(6, "east") == 164
     assert decode_coil_tag(164) == (6, "east")
     assert decode_coil_tag(64) is None
+
+
+def test_station_map_id_rules():
+    assert station_tag_id("A02", "north") == 5
+    assert station_tag_id("A02", "east") == 6
+    assert station_tag_id("A02", "south") == 7
+    assert station_tag_id("A02", "west") == 8
+    assert station_pair_ids("A02", "west_east") == (8, 6)
+    assert station_pair_ids("A02", "north_south") == (5, 7)
+    assert station_pair_ids("B02", "west_east") == (12, 10)
+    assert station_pair_ids("C04", "north_south") == (33, 35)
+    assert decode_station_tag(6) == ("A02", "east")
+    assert decode_station_tag(113) is None
 
 
 def test_angle_wraparound():

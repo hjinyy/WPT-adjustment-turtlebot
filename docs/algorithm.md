@@ -3,17 +3,16 @@
 ## 1. 상태 머신
 
 ```text
-SEARCH_HEAD_TAG → APPROACH_SHELF → ENTER_SHELF → ALIGN_COIL → FINAL_STOP → CHARGING
+ALIGN_COIL → FINAL_STOP → CHARGING
 ```
+
+`layout_mode: station_map`에서는 `apriltag_sheet.pdf`의 station marker pair를 직접 사용하므로 최종 정합 상태에서 시작합니다. 기존 shelf/head-tag 방식은 backwards compatibility 용도로 남아 있습니다.
 
 ## 2. 상태별 판단 및 구동
 
 | 상태 | 판단 기준 | 구동 명령 |
 |---|---|---|
-| `SEARCH_HEAD_TAG` | 목표 head tag ID 인식 여부 | 안 보이면 복도 저속 전진 |
-| `APPROACH_SHELF` | head tag 중심/각도 오차 | 중심으로 맞추며 접근 |
-| `ENTER_SHELF` | 목표 선반의 coil tag pair 인식 여부 | 선반 내부로 매우 저속 진입 |
-| `ALIGN_COIL` | coil tag pair의 midpoint/angle 오차 | `/cmd_vel`로 전후진/회전 보정 |
+| `ALIGN_COIL` | target station의 tag pair midpoint/angle 오차 | `/cmd_vel`로 전후진/회전 보정 |
 | `FINAL_STOP` | N프레임 연속 정합 완료 | 정지 명령 |
 | `CHARGING` | 정지 상태 유지 | WPT 충전 인터페이스 ON |
 
@@ -29,8 +28,8 @@ y_error = pair_midpoint_y - target_y
 angle_error = normalize(pair_angle - target_angle)
 ```
 
-최종 WPT 정합에는 West/East pair를 기본으로 사용합니다. 예를 들어 선반 1은 `113`, `114`를 동시에 인식해야 합니다.
-90도 회전 후 방향 검증에는 North/South pair를 사용합니다. 예를 들어 선반 1은 `111`, `112`입니다.
+최종 WPT 정합에는 West/East pair를 기본으로 사용합니다. `A02`에서는 실제 numeric marker ID `8`, `6`을 동시에 인식해야 합니다.
+90도 회전 후 방향 검증에는 North/South pair를 사용합니다. `A02`에서는 marker `5`, `7`입니다.
 
 ## 4. 속도 변환
 

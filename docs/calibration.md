@@ -9,18 +9,16 @@
 1. TurtleBot을 손으로 정확한 WPT 코일 정합 위치에 놓습니다.
 2. 전방/하부/측면 카메라 영상을 확인합니다.
 3. 각 카메라에서 보이는 pair의 midpoint `center_x`, `center_y`, `angle_deg`를 기록합니다.
-4. `config/wpt_alignment.yaml`의 `shelves.<번호>.targets`에 기록합니다.
+4. `config/wpt_alignment.yaml`의 `stations.<이름>.targets`에 기록합니다.
 5. `dry_run: true`로 속도 명령 부호를 확인합니다.
 6. 바퀴를 띄우거나 비상정지 가능한 환경에서 `dry_run: false`를 테스트합니다.
 
 ## 3. YAML 예시
 
 ```yaml
-shelves:
-  "1":
+stations:
+  A02:
     targets:
-      front:
-        head: {x: 320, y: 240, angle_deg: 0}
       left_bottom:
         west_east: {x: 318, y: 219, angle_deg: 0}
         north_south: {x: 318, y: 219, angle_deg: 90}

@@ -1,65 +1,73 @@
-# AprilTag 제작 및 ID 계획
+# AprilTag Station Map 계획
 
-## 1. 태그 종류
+## 1. 기본 원칙
 
-| 종류 | 역할 | 예시 ID |
-|---|---|---|
-| Head tag | 복도 주행 중 선반 진입 위치 판단 | 101, 102, ... |
-| Coil alignment tag | 송신 코일 주변 최종 정합 | 111~114, 121~124, ... |
+현재 물리 floor layout은 `apriltag_sheet.pdf`에 인쇄된 numeric marker ID를 그대로 사용합니다. `A02N`, `A02E` 같은 문자열은 사람이 읽는 station label이고, AprilTag detector가 반환하는 값은 숫자 ID입니다.
 
-## 2. ID 규칙
+예:
 
-Head tag:
+| Label | 의미 | 실제 marker ID |
+|---|---|---:|
+| A02N | A02 station north marker | 5 |
+| A02E | A02 station east marker | 6 |
+| A02S | A02 station south marker | 7 |
+| A02W | A02 station west marker | 8 |
 
-```text
-head_id = 100 + shelf_number
-```
+기존 `111/112/113/114` 방식은 backwards compatibility 용도로만 남기고, 실제 실험의 기본값은 station map입니다.
 
-Coil alignment tag:
+## 2. Floor Node Markers
 
-```text
-coil_id = 100 + 10 * shelf_number + position_number
-```
-
-| 위치 | 번호 |
+| Node | ID |
 |---|---:|
-| north/up | 1 |
-| south/down | 2 |
-| west/left | 3 |
-| east/right | 4 |
+| A01 | 1 |
+| B01 | 2 |
+| C01 | 3 |
+| D01 | 4 |
+| D02 | 17 |
+| A03 | 18 |
+| B03 | 19 |
+| C03 | 20 |
+| D04 | 37 |
+| A05 | 38 |
+| B05 | 39 |
+| C05 | 40 |
+| D05 | 41 |
 
-예: 선반 1의 west/east pair는 `113`, `114`입니다.
-예: 선반 6의 east tag는 `164`입니다.
+## 3. Station Markers
 
-## 3. 코일 주변 배치
+| Station | North | East | South | West |
+|---|---:|---:|---:|---:|
+| A02 | 5 | 6 | 7 | 8 |
+| B02 | 9 | 10 | 11 | 12 |
+| C02 | 13 | 14 | 15 | 16 |
+| D03 | 21 | 22 | 23 | 24 |
+| A04 | 25 | 26 | 27 | 28 |
+| B04 | 29 | 30 | 31 | 32 |
+| C04 | 33 | 34 | 35 | 36 |
 
-```text
-           Tag North
-               □
-
-Tag West □    ◎    □ Tag East
-           Tx Coil
-
-               □
-           Tag South
-```
+## 4. Pair 사용 규칙
 
 최종 WPT 코일 정합에는 단일 tag가 아니라 두 tag pair를 사용합니다.
 
-- 기본 최종 정합 pair: West/East, 예: 선반 1은 `113`, `114`
-- 90도 회전 후 방향 검증 pair: North/South, 예: 선반 1은 `111`, `112`
+- 기본 최종 정합 pair: `west_east`
+- 90도 회전 후 방향 검증 pair: `north_south`
 
-## 4. 출력 권장
+예:
 
-1. 기본 family는 `tag36h11`입니다.
-2. 무광 출력이 유리합니다.
-3. 태그 주변 흰색 여백을 충분히 둡니다.
-4. 출력 후 실제 태그 크기를 측정해 기록합니다.
+| Station | Pair | 실제 marker IDs |
+|---|---|---:|
+| A02 | west_east | 8, 6 |
+| A02 | north_south | 5, 7 |
+| B02 | west_east | 12, 10 |
+| C04 | north_south | 33, 35 |
 
-## 5. 태그 시트 생성
+## 5. 설정
 
-```bash
-python3 scripts/generate_tag_sheet.py --shelves 1 2 3 4 5 6 7 8 --output-dir generated_tags
+```yaml
+layout_mode: station_map
+target_station: A02
+
+alignment:
+  final_pair: west_east
+  rotation_verify_pair: north_south
 ```
-
-이 스크립트는 공식 AprilTag 이미지 저장소에서 PNG를 내려받아 A4 출력용 PNG/PDF를 생성합니다.

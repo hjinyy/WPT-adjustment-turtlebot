@@ -1,6 +1,10 @@
 """AprilTag ID layout helpers.
 
-Default rule:
+Recommended physical layout:
+- station map IDs are the numeric marker IDs printed in apriltag_sheet.pdf.
+- labels such as A02N are human-readable station/position names.
+
+Backwards-compatible shelf rule:
 - head tag: 100 + shelf_number
 - coil tag: 100 + 10 * shelf_number + position_number
   - north/up = 1
@@ -15,6 +19,38 @@ from dataclasses import dataclass
 
 POSITION_TO_NUMBER = {"north": 1, "south": 2, "west": 3, "east": 4}
 NUMBER_TO_POSITION = {v: k for k, v in POSITION_TO_NUMBER.items()}
+PAIR_TO_POSITIONS = {
+    "north_south": ("north", "south"),
+    "south_north": ("south", "north"),
+    "west_east": ("west", "east"),
+    "east_west": ("east", "west"),
+}
+
+FLOOR_NODE_TAGS = {
+    "A01": 1,
+    "B01": 2,
+    "C01": 3,
+    "D01": 4,
+    "D02": 17,
+    "A03": 18,
+    "B03": 19,
+    "C03": 20,
+    "D04": 37,
+    "A05": 38,
+    "B05": 39,
+    "C05": 40,
+    "D05": 41,
+}
+
+STATION_TAGS = {
+    "A02": {"north": 5, "east": 6, "south": 7, "west": 8},
+    "B02": {"north": 9, "east": 10, "south": 11, "west": 12},
+    "C02": {"north": 13, "east": 14, "south": 15, "west": 16},
+    "D03": {"north": 21, "east": 22, "south": 23, "west": 24},
+    "A04": {"north": 25, "east": 26, "south": 27, "west": 28},
+    "B04": {"north": 29, "east": 30, "south": 31, "west": 32},
+    "C04": {"north": 33, "east": 34, "south": 35, "west": 36},
+}
 
 
 @dataclass(frozen=True)
@@ -36,14 +72,17 @@ def coil_tag_id(shelf: int, position: str) -> int:
 
 
 def coil_pair_ids(shelf: int, pair_name: str) -> tuple[int, int]:
-    pairs = {
-        "north_south": ("north", "south"),
-        "south_north": ("south", "north"),
-        "west_east": ("west", "east"),
-        "east_west": ("east", "west"),
-    }
-    positions = pairs[pair_name]
+    positions = PAIR_TO_POSITIONS[pair_name]
     return coil_tag_id(shelf, positions[0]), coil_tag_id(shelf, positions[1])
+
+
+def station_tag_id(station_name: str, position: str) -> int:
+    return STATION_TAGS[station_name.upper()][position.lower()]
+
+
+def station_pair_ids(station_name: str, pair_name: str) -> tuple[int, int]:
+    positions = PAIR_TO_POSITIONS[pair_name]
+    return station_tag_id(station_name, positions[0]), station_tag_id(station_name, positions[1])
 
 
 def tag_set_for_shelf(shelf: int) -> ShelfTagSet:
@@ -67,3 +106,12 @@ def decode_coil_tag(tag_id: int) -> tuple[int, str] | None:
     if shelf <= 0 or position is None:
         return None
     return shelf, position
+
+
+def decode_station_tag(tag_id: int) -> tuple[str, str] | None:
+    tag_id = int(tag_id)
+    for station_name, positions in STATION_TAGS.items():
+        for position, marker_id in positions.items():
+            if marker_id == tag_id:
+                return station_name, position
+    return None

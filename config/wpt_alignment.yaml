@@ -1,6 +1,9 @@
 ros:
   cmd_vel_topic: /cmd_vel
 
+layout_mode: station_map
+target_station: A02
+
 apriltag:
   family: tag36h11
 
@@ -72,6 +75,20 @@ shelves:
         "112": {x: 320, y: 230, angle_deg: 180}
         "113": {x: 320, y: 230, angle_deg: 180}
         "114": {x: 320, y: 230, angle_deg: 180}
+        west_east: {x: 320, y: 230, angle_deg: 180}
+        north_south: {x: 320, y: 230, angle_deg: -90}
+        default: {x: 320, y: 230, angle_deg: 180}
+
+stations:
+  A02:
+    targets:
+      front:
+        default: {x: 320, y: 240, angle_deg: 0}
+      left_bottom:
+        west_east: {x: 320, y: 220, angle_deg: 0}
+        north_south: {x: 320, y: 220, angle_deg: 90}
+        default: {x: 320, y: 220, angle_deg: 0}
+      right_bottom:
         west_east: {x: 320, y: 230, angle_deg: 180}
         north_south: {x: 320, y: 230, angle_deg: -90}
         default: {x: 320, y: 230, angle_deg: 180}

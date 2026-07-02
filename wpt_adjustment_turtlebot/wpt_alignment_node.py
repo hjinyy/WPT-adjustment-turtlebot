@@ -23,7 +23,7 @@ from .controller_math import (
     compute_pair_observation,
     is_aligned,
 )
-from .tag_layout import coil_pair_ids, coil_tag_id, head_tag_id
+from .tag_layout import coil_pair_ids, head_tag_id, station_pair_ids
 
 try:
     import rclpy
@@ -63,6 +63,16 @@ class AprilTagDetector:
                 params = cv2.aruco.DetectorParameters()
                 self.detector = cv2.aruco.ArucoDetector(dictionary, params)
                 self.backend = "opencv_aruco"
+        elif hasattr(cv2, "aruco") and hasattr(cv2.aruco, "detectMarkers"):
+            dictionary_id = getattr(cv2.aruco, "DICT_APRILTAG_36h11", None)
+            if dictionary_id is not None:
+                self.dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
+                if hasattr(cv2.aruco, "DetectorParameters_create"):
+                    self.params = cv2.aruco.DetectorParameters_create()
+                else:
+                    self.params = cv2.aruco.DetectorParameters()
+                self.detector = cv2.aruco
+                self.backend = "opencv_aruco_legacy"
 
     def detect(self, frame_bgr) -> list[Detection]:
         if self.detector is None:
@@ -70,7 +80,10 @@ class AprilTagDetector:
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         if self.backend == "pupil_apriltags":
             return [self._from_pupil(d) for d in self.detector.detect(gray)]
-        corners, ids, _ = self.detector.detectMarkers(gray)
+        if self.backend == "opencv_aruco_legacy":
+            corners, ids, _ = self.detector.detectMarkers(gray, self.dictionary, parameters=self.params)
+        else:
+            corners, ids, _ = self.detector.detectMarkers(gray)
         if ids is None:
             return []
         return [self._from_corners(int(i[0]), [(float(x), float(y)) for x, y in c.reshape(-1, 2)]) for c, i in zip(corners, ids)]
@@ -106,6 +119,7 @@ class WptAlignmentNode(Node):
         super().__init__("wpt_alignment_node")
         self.declare_parameter("config_file", "")
         self.declare_parameter("target_shelf", 1)
+        self.declare_parameter("target_station", "")
         self.declare_parameter("dry_run", None)
         config_file = self.get_parameter("config_file").get_parameter_value().string_value
         if not config_file:
@@ -114,13 +128,20 @@ class WptAlignmentNode(Node):
         override_dry = self.get_parameter("dry_run").value
         if override_dry is not None:
             self.config["safety"]["dry_run"] = bool(override_dry)
+        override_station = self.get_parameter("target_station").get_parameter_value().string_value
+        if override_station:
+            self.config["target_station"] = override_station
+            self.config["layout_mode"] = "station_map"
         self.target_shelf = int(self.get_parameter("target_shelf").value)
-        self.state = AlignmentState.SEARCH_HEAD_TAG
+        self.layout_mode = str(self.config.get("layout_mode", "station_map"))
+        self.target_station = str(self.config.get("target_station", "A02")).upper()
+        self.state = AlignmentState.ALIGN_COIL if self._is_station_map() else AlignmentState.SEARCH_HEAD_TAG
         self.stable_count = 0
         self.last_seen_time = time.monotonic()
         self.active_coil_camera = None
         self.detector = AprilTagDetector(self.config["apriltag"].get("family", "tag36h11"))
         self.get_logger().info(f"AprilTag backend: {self.detector.backend}")
+        self.get_logger().info(f"layout_mode={self.layout_mode} target_station={self.target_station}")
         self.cameras = self._open_cameras()
         self.cmd_pub = self.create_publisher(Twist, self.config["ros"].get("cmd_vel_topic", "/cmd_vel"), 10)
         self.timer = self.create_timer(1.0 / float(self.config["control"].get("loop_hz", 10.0)), self.step)
@@ -231,7 +252,7 @@ class WptAlignmentNode(Node):
         return max(candidates, key=lambda o: o.area_px, default=None)
 
     def _find_any_target_coil_tag(self, obs: list[TagObservation], preferred_camera: str | None = None) -> TagObservation | None:
-        target_ids = {coil_tag_id(self.target_shelf, p) for p in ("north", "south", "west", "east")}
+        target_ids = set(self._pair_ids("north_south") + self._pair_ids("west_east"))
         candidates = [o for o in obs if o.tag_id in target_ids]
         if preferred_camera:
             preferred = [o for o in candidates if o.camera_name == preferred_camera]
@@ -240,7 +261,7 @@ class WptAlignmentNode(Node):
         return max(candidates, key=lambda o: o.area_px, default=None)
 
     def _find_target_pair(self, obs: list[TagObservation], pair_name: str, preferred_camera: str | None = None):
-        first_id, second_id = coil_pair_ids(self.target_shelf, pair_name)
+        first_id, second_id = self._pair_ids(pair_name)
         camera_names = sorted({o.camera_name for o in obs if o.camera_name})
         if preferred_camera:
             camera_names = [preferred_camera]
@@ -258,41 +279,59 @@ class WptAlignmentNode(Node):
         return best_pair
 
     def _has_any_pair_marker(self, obs: list[TagObservation], pair_name: str) -> bool:
-        first_id, second_id = coil_pair_ids(self.target_shelf, pair_name)
+        first_id, second_id = self._pair_ids(pair_name)
         return any(o.tag_id in {first_id, second_id} for o in obs)
 
     def _target_for(self, camera: str, tag_key: str) -> TargetPoseInImage:
-        shelf_cfg = self.config["shelves"][str(self.target_shelf)]
-        raw = shelf_cfg["targets"][camera].get(tag_key, shelf_cfg["targets"][camera]["default"])
+        if self._is_station_map():
+            stations = self.config["stations"]
+            target_cfg = stations.get(self.target_station, stations.get("default", stations["A02"]))
+        else:
+            target_cfg = self.config["shelves"][str(self.target_shelf)]
+        raw = target_cfg["targets"][camera].get(tag_key, target_cfg["targets"][camera]["default"])
         return TargetPoseInImage(float(raw["x"]), float(raw["y"]), float(raw["angle_deg"]))
 
     def _final_pair_name(self) -> str:
         return str(self.config["alignment"].get("final_pair", "west_east"))
+
+    def _is_station_map(self) -> bool:
+        return self.layout_mode == "station_map"
+
+    def _pair_ids(self, pair_name: str) -> tuple[int, int]:
+        if self._is_station_map():
+            return station_pair_ids(self.target_station, pair_name)
+        return coil_pair_ids(self.target_shelf, pair_name)
 
     def _log_detected_tags(self, obs: list[TagObservation]) -> None:
         tags = ", ".join(
             f"id={o.tag_id} cam={o.camera_name} center=({o.center_x:.1f},{o.center_y:.1f}) angle={o.angle_deg:.1f}"
             for o in obs
         )
-        self.get_logger().info(f"calib state={self.state.value} detected_tags=[{tags}]")
+        self.get_logger().info(
+            f"calib layout_mode={self.layout_mode} target_station={self.target_station} "
+            f"state={self.state.value} detected_tags=[{tags}]"
+        )
 
     def _log_pair_missing(self, pair_name: str, obs: list[TagObservation], camera: str | None = None) -> None:
-        first_id, second_id = coil_pair_ids(self.target_shelf, pair_name)
+        first_id, second_id = self._pair_ids(pair_name)
         visible = [o for o in obs if o.tag_id in {first_id, second_id} and (camera is None or o.camera_name == camera)]
         visible_text = ", ".join(
             f"id={o.tag_id} cam={o.camera_name} center=({o.center_x:.1f},{o.center_y:.1f})" for o in visible
         )
         self.get_logger().info(
-            f"calib state={self.state.value} selected_pair={pair_name} required_ids=({first_id},{second_id}) "
-            f"pair_missing visible=[{visible_text}] stable_count={self.stable_count}"
+            f"calib layout_mode={self.layout_mode} target_station={self.target_station} state={self.state.value} "
+            f"selected_pair={pair_name} required_ids=({first_id},{second_id}) "
+            f"pair_missing visible_marker_ids=[{visible_text}] stable_count={self.stable_count}"
         )
 
     def _log_pair_alignment(self, pair_name: str, pair: TagPairObservation, err) -> None:
+        first_id, second_id = self._pair_ids(pair_name)
         err_text = "x_error=NA y_error=NA angle_error=NA"
         if err is not None:
             err_text = f"x_error={err.x:.2f} y_error={err.y:.2f} angle_error={err.angle_deg:.2f}"
         self.get_logger().info(
-            f"calib state={self.state.value} selected_pair={pair_name} camera={pair.camera_name} "
+            f"calib layout_mode={self.layout_mode} target_station={self.target_station} state={self.state.value} "
+            f"selected_pair={pair_name} required_ids=({first_id},{second_id}) camera={pair.camera_name} "
             f"marker_a=id={pair.first.tag_id} center=({pair.first.center_x:.1f},{pair.first.center_y:.1f}) "
             f"marker_b=id={pair.second.tag_id} center=({pair.second.center_x:.1f},{pair.second.center_y:.1f}) "
             f"pair_mid_x={pair.midpoint_x:.2f} pair_mid_y={pair.midpoint_y:.2f} "
