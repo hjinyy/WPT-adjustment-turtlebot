@@ -5,7 +5,7 @@
 | 종류 | 역할 | 예시 ID |
 |---|---|---|
 | Head tag | 복도 주행 중 선반 진입 위치 판단 | 101, 102, ... |
-| Coil alignment tag | 송신 코일 주변 최종 정합 | 11~14, 21~24, ... |
+| Coil alignment tag | 송신 코일 주변 최종 정합 | 111~114, 121~124, ... |
 
 ## 2. ID 규칙
 
@@ -18,7 +18,7 @@ head_id = 100 + shelf_number
 Coil alignment tag:
 
 ```text
-coil_id = shelf_number * 10 + position_number
+coil_id = 100 + 10 * shelf_number + position_number
 ```
 
 | 위치 | 번호 |
@@ -28,7 +28,8 @@ coil_id = shelf_number * 10 + position_number
 | west/left | 3 |
 | east/right | 4 |
 
-예: 선반 6의 east tag는 `64`입니다.
+예: 선반 1의 west/east pair는 `113`, `114`입니다.
+예: 선반 6의 east tag는 `164`입니다.
 
 ## 3. 코일 주변 배치
 
@@ -42,6 +43,11 @@ Tag West □    ◎    □ Tag East
                □
            Tag South
 ```
+
+최종 WPT 코일 정합에는 단일 tag가 아니라 두 tag pair를 사용합니다.
+
+- 기본 최종 정합 pair: West/East, 예: 선반 1은 `113`, `114`
+- 90도 회전 후 방향 검증 pair: North/South, 예: 선반 1은 `111`, `112`
 
 ## 4. 출력 권장
 

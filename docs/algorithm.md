@@ -12,18 +12,25 @@ SEARCH_HEAD_TAG → APPROACH_SHELF → ENTER_SHELF → ALIGN_COIL → FINAL_STOP
 |---|---|---|
 | `SEARCH_HEAD_TAG` | 목표 head tag ID 인식 여부 | 안 보이면 복도 저속 전진 |
 | `APPROACH_SHELF` | head tag 중심/각도 오차 | 중심으로 맞추며 접근 |
-| `ENTER_SHELF` | 목표 선반의 coil tag 인식 여부 | 선반 내부로 매우 저속 진입 |
-| `ALIGN_COIL` | coil tag 중심/각도 오차 | `/cmd_vel`로 전후진/회전 보정 |
+| `ENTER_SHELF` | 목표 선반의 coil tag pair 인식 여부 | 선반 내부로 매우 저속 진입 |
+| `ALIGN_COIL` | coil tag pair의 midpoint/angle 오차 | `/cmd_vel`로 전후진/회전 보정 |
 | `FINAL_STOP` | N프레임 연속 정합 완료 | 정지 명령 |
 | `CHARGING` | 정지 상태 유지 | WPT 충전 인터페이스 ON |
 
 ## 3. 오차 계산
 
 ```text
-x_error = tag_x - target_x
-y_error = tag_y - target_y
-angle_error = normalize(tag_angle - target_angle)
+pair_midpoint_x = (tag_a_x + tag_b_x) / 2
+pair_midpoint_y = (tag_a_y + tag_b_y) / 2
+pair_angle = atan2(tag_b_y - tag_a_y, tag_b_x - tag_a_x)
+
+x_error = pair_midpoint_x - target_x
+y_error = pair_midpoint_y - target_y
+angle_error = normalize(pair_angle - target_angle)
 ```
+
+최종 WPT 정합에는 West/East pair를 기본으로 사용합니다. 예를 들어 선반 1은 `113`, `114`를 동시에 인식해야 합니다.
+90도 회전 후 방향 검증에는 North/South pair를 사용합니다. 예를 들어 선반 1은 `111`, `112`입니다.
 
 ## 4. 속도 변환
 
@@ -44,6 +51,8 @@ abs(y_error) <= threshold_y_px
 abs(angle_error) <= threshold_angle_deg
 stable_count >= stable_frames_required
 ```
+
+두 tag가 모두 보이지 않거나 pair 조건이 깨지면 `stable_count`를 0으로 되돌리고 정지합니다.
 
 초기 추천값은 x/y 5~10 px, angle 1~3 deg, stable 10 frame입니다.
 

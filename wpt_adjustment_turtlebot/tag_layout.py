@@ -2,12 +2,14 @@
 
 Default rule:
 - head tag: 100 + shelf_number
-- coil tag: shelf_number * 10 + position_number
+- coil tag: 100 + 10 * shelf_number + position_number
   - north/up = 1
   - south/down = 2
   - west/left = 3
   - east/right = 4
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -30,7 +32,18 @@ def head_tag_id(shelf: int) -> int:
 
 
 def coil_tag_id(shelf: int, position: str) -> int:
-    return int(shelf) * 10 + POSITION_TO_NUMBER[position]
+    return 100 + int(shelf) * 10 + POSITION_TO_NUMBER[position]
+
+
+def coil_pair_ids(shelf: int, pair_name: str) -> tuple[int, int]:
+    pairs = {
+        "north_south": ("north", "south"),
+        "south_north": ("south", "north"),
+        "west_east": ("west", "east"),
+        "east_west": ("east", "west"),
+    }
+    positions = pairs[pair_name]
+    return coil_tag_id(shelf, positions[0]), coil_tag_id(shelf, positions[1])
 
 
 def tag_set_for_shelf(shelf: int) -> ShelfTagSet:
@@ -46,7 +59,9 @@ def tag_set_for_shelf(shelf: int) -> ShelfTagSet:
 
 def decode_coil_tag(tag_id: int) -> tuple[int, str] | None:
     tag_id = int(tag_id)
-    shelf = tag_id // 10
+    if tag_id < 111:
+        return None
+    shelf = (tag_id - 100) // 10
     position_number = tag_id % 10
     position = NUMBER_TO_POSITION.get(position_number)
     if shelf <= 0 or position is None:

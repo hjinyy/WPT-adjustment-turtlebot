@@ -27,6 +27,8 @@ speed:
 
 alignment:
   stable_frames_required: 10
+  final_pair: west_east
+  rotation_verify_pair: north_south
   head: {threshold_x_px: 25, threshold_y_px: 25, threshold_angle_deg: 8}
   coil: {threshold_x_px: 7, threshold_y_px: 7, threshold_angle_deg: 2.0}
 
@@ -58,14 +60,18 @@ shelves:
         head: {x: 320, y: 240, angle_deg: 0}
         default: {x: 320, y: 240, angle_deg: 0}
       left_bottom:
-        "11": {x: 320, y: 220, angle_deg: 0}
-        "12": {x: 320, y: 220, angle_deg: 0}
-        "13": {x: 320, y: 220, angle_deg: 0}
-        "14": {x: 320, y: 220, angle_deg: 0}
+        "111": {x: 320, y: 220, angle_deg: 0}
+        "112": {x: 320, y: 220, angle_deg: 0}
+        "113": {x: 320, y: 220, angle_deg: 0}
+        "114": {x: 320, y: 220, angle_deg: 0}
+        west_east: {x: 320, y: 220, angle_deg: 0}
+        north_south: {x: 320, y: 220, angle_deg: 90}
         default: {x: 320, y: 220, angle_deg: 0}
       right_bottom:
-        "11": {x: 320, y: 230, angle_deg: 180}
-        "12": {x: 320, y: 230, angle_deg: 180}
-        "13": {x: 320, y: 230, angle_deg: 180}
-        "14": {x: 320, y: 230, angle_deg: 180}
+        "111": {x: 320, y: 230, angle_deg: 180}
+        "112": {x: 320, y: 230, angle_deg: 180}
+        "113": {x: 320, y: 230, angle_deg: 180}
+        "114": {x: 320, y: 230, angle_deg: 180}
+        west_east: {x: 320, y: 230, angle_deg: 180}
+        north_south: {x: 320, y: 230, angle_deg: -90}
         default: {x: 320, y: 230, angle_deg: 180}
