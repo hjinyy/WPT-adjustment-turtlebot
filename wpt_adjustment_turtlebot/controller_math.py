@@ -102,6 +102,17 @@ def grid_cell(x: float, y: float, width: float, height: float, grid_size: int = 
     return row, col
 
 
+def alignment_state_for_report(any_tag_detected: bool, all_cameras_aligned: bool, locked: bool) -> str:
+    """Map a local 3x3-grid alignment check to the charging-control server's alignment_state enum."""
+    if locked:
+        return "Locked"
+    if all_cameras_aligned:
+        return "Aligned"
+    if any_tag_detected:
+        return "Searching"
+    return "None"
+
+
 def compute_alignment_cmd(
     err: AlignmentError,
     *,

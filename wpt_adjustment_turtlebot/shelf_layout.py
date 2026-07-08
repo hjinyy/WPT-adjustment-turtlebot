@@ -28,6 +28,11 @@ COIL_SPACING_Y_M = 0.30
 SHELF_ROW = {1: 0, 2: 0, 3: 1, 4: 1}
 SHELF_COL = {1: 0, 2: 1, 3: 0, 4: 1}
 
+# charging-control server (tserver.local:8000) node id <-> our local shelf number.
+# Only these 4 of the server's 8 grid nodes are "Workspace" (coil) nodes.
+NODE_TO_SHELF = {"A02": 1, "B02": 2, "A03": 3, "B03": 4}
+SHELF_TO_NODE = {shelf: node for node, shelf in NODE_TO_SHELF.items()}
+
 
 @dataclass(frozen=True)
 class Point2D:

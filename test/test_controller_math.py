@@ -1,6 +1,7 @@
 from wpt_adjustment_turtlebot.controller_math import (
     TagObservation,
     TargetPoseInImage,
+    alignment_state_for_report,
     angle_error_deg,
     compute_alignment_cmd,
     compute_alignment_error,
@@ -54,6 +55,13 @@ def test_grid_cell_center_and_corners():
     assert grid_cell(0, 0, 640, 480) == (1, 1)
     assert grid_cell(639, 479, 640, 480) == (3, 3)
     assert grid_cell(640, 480, 640, 480) == (3, 3)
+
+
+def test_alignment_state_for_report():
+    assert alignment_state_for_report(any_tag_detected=False, all_cameras_aligned=False, locked=False) == "None"
+    assert alignment_state_for_report(any_tag_detected=True, all_cameras_aligned=False, locked=False) == "Searching"
+    assert alignment_state_for_report(any_tag_detected=True, all_cameras_aligned=True, locked=False) == "Aligned"
+    assert alignment_state_for_report(any_tag_detected=True, all_cameras_aligned=True, locked=True) == "Locked"
 
 
 def test_angle_wraparound():

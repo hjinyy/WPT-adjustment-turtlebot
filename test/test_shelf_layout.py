@@ -1,6 +1,8 @@
 from wpt_adjustment_turtlebot.shelf_layout import (
     COIL_SPACING_X_M,
     COIL_SPACING_Y_M,
+    NODE_TO_SHELF,
+    SHELF_TO_NODE,
     Point2D,
     distance_and_heading,
     shelf_position,
@@ -30,3 +32,10 @@ def test_distance_and_heading_shelf1_to_shelf4():
     distance, heading = distance_and_heading(shelf_position(1), shelf_position(4))
     assert round(distance, 4) == round((COIL_SPACING_X_M**2 + COIL_SPACING_Y_M**2) ** 0.5, 4)
     assert heading > 0
+
+
+def test_node_shelf_mapping_is_consistent():
+    assert NODE_TO_SHELF == {"A02": 1, "B02": 2, "A03": 3, "B03": 4}
+    assert SHELF_TO_NODE == {1: "A02", 2: "B02", 3: "A03", 4: "B03"}
+    for node, shelf in NODE_TO_SHELF.items():
+        assert SHELF_TO_NODE[shelf] == node
