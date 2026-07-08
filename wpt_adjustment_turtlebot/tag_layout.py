@@ -9,10 +9,18 @@ Default rule:
   - east/right = 4
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 POSITION_TO_NUMBER = {"north": 1, "south": 2, "west": 3, "east": 4}
 NUMBER_TO_POSITION = {v: k for k, v in POSITION_TO_NUMBER.items()}
+PAIR_TO_POSITIONS = {
+    "north_south": ("north", "south"),
+    "south_north": ("south", "north"),
+    "west_east": ("west", "east"),
+    "east_west": ("east", "west"),
+}
 
 
 @dataclass(frozen=True)
@@ -31,6 +39,11 @@ def head_tag_id(shelf: int) -> int:
 
 def coil_tag_id(shelf: int, position: str) -> int:
     return int(shelf) * 10 + POSITION_TO_NUMBER[position]
+
+
+def coil_pair_ids(shelf: int, pair_name: str) -> tuple[int, int]:
+    positions = PAIR_TO_POSITIONS[pair_name]
+    return coil_tag_id(shelf, positions[0]), coil_tag_id(shelf, positions[1])
 
 
 def tag_set_for_shelf(shelf: int) -> ShelfTagSet:

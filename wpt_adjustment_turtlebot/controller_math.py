@@ -2,13 +2,11 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from math import copysign
+from math import atan2, copysign, degrees
 
 
 class AlignmentState(str, Enum):
     IDLE = "IDLE"
-    SEARCH_HEAD_TAG = "SEARCH_HEAD_TAG"
-    APPROACH_SHELF = "APPROACH_SHELF"
     ENTER_SHELF = "ENTER_SHELF"
     ALIGN_COIL = "ALIGN_COIL"
     FINAL_STOP = "FINAL_STOP"
@@ -23,6 +21,16 @@ class TagObservation:
     center_y: float
     angle_deg: float
     area_px: float = 0.0
+    camera_name: str = ""
+
+
+@dataclass
+class TagPairObservation:
+    first: TagObservation
+    second: TagObservation
+    midpoint_x: float
+    midpoint_y: float
+    pair_angle_deg: float
     camera_name: str = ""
 
 
@@ -59,11 +67,27 @@ def angle_error_deg(current: float, target: float) -> float:
     return (current - target + 180.0) % 360.0 - 180.0
 
 
+def compute_pair_observation(first: TagObservation, second: TagObservation) -> TagPairObservation:
+    midpoint_x = (first.center_x + second.center_x) / 2.0
+    midpoint_y = (first.center_y + second.center_y) / 2.0
+    pair_angle_deg = degrees(atan2(second.center_y - first.center_y, second.center_x - first.center_x))
+    camera_name = first.camera_name if first.camera_name == second.camera_name else ""
+    return TagPairObservation(first, second, midpoint_x, midpoint_y, pair_angle_deg, camera_name)
+
+
 def compute_alignment_error(obs: TagObservation, target: TargetPoseInImage) -> AlignmentError:
     return AlignmentError(
         x=obs.center_x - target.x,
         y=obs.center_y - target.y,
         angle_deg=angle_error_deg(obs.angle_deg, target.angle_deg),
+    )
+
+
+def compute_pair_alignment_error(pair: TagPairObservation, target: TargetPoseInImage) -> AlignmentError:
+    return AlignmentError(
+        x=pair.midpoint_x - target.x,
+        y=pair.midpoint_y - target.y,
+        angle_deg=angle_error_deg(pair.pair_angle_deg, target.angle_deg),
     )
 
 

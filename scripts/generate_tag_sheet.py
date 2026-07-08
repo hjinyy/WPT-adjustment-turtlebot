@@ -14,7 +14,7 @@ from urllib.request import urlopen
 
 from PIL import Image, ImageDraw, ImageFont
 
-from wpt_adjustment_turtlebot.tag_layout import coil_tag_id, head_tag_id
+from wpt_adjustment_turtlebot.tag_layout import coil_tag_id
 
 BASE_URL = "https://raw.githubusercontent.com/AprilRobotics/apriltag-imgs/master/tag36h11/tag36_11_{tag_id:05d}.png"
 
@@ -32,7 +32,6 @@ def download_tag(tag_id: int) -> Image.Image:
 def build_tag_ids(shelves: list[int]) -> list[tuple[str, int]]:
     items = []
     for shelf in shelves:
-        items.append((f"shelf {shelf} head", head_tag_id(shelf)))
         for pos in ("north", "south", "west", "east"):
             items.append((f"shelf {shelf} {pos}", coil_tag_id(shelf, pos)))
     return items
@@ -73,7 +72,7 @@ def generate_sheet(items: list[tuple[str, int]], output_dir: Path, tag_size_mm: 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--shelves", nargs="+", type=int, default=list(range(1, 9)))
+    parser.add_argument("--shelves", nargs="+", type=int, default=list(range(1, 5)))
     parser.add_argument("--output-dir", type=Path, default=Path("generated_tags"))
     parser.add_argument("--tag-size-mm", type=float, default=60.0)
     parser.add_argument("--dpi", type=int, default=300)

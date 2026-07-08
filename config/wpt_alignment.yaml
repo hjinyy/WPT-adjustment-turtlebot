@@ -15,11 +15,6 @@ cameras:
 
 speed:
   corridor_linear: 0.06
-  shelf_entry_linear: 0.025
-  head_max_linear: 0.05
-  head_max_angular: 0.18
-  head_min_linear: 0.01
-  head_min_angular: 0.02
   coil_max_linear: 0.015
   coil_max_angular: 0.08
   coil_min_linear: 0.004
@@ -27,20 +22,11 @@ speed:
 
 alignment:
   stable_frames_required: 10
-  head: {threshold_x_px: 25, threshold_y_px: 25, threshold_angle_deg: 8}
+  final_pair: west_east
   coil: {threshold_x_px: 7, threshold_y_px: 7, threshold_angle_deg: 2.0}
 
 control:
   loop_hz: 10.0
-  head:
-    k_y_to_linear: -0.0006
-    k_x_to_angular: -0.0020
-    k_angle_to_angular: -0.0040
-    x_deadband_px: 10
-    y_deadband_px: 10
-    angle_deadband_deg: 3
-    invert_linear: false
-    invert_angular: false
   coil:
     k_y_to_linear: -0.00025
     k_x_to_angular: -0.0009
@@ -54,18 +40,11 @@ control:
 shelves:
   "1":
     targets:
-      front:
-        head: {x: 320, y: 240, angle_deg: 0}
-        default: {x: 320, y: 240, angle_deg: 0}
       left_bottom:
-        "11": {x: 320, y: 220, angle_deg: 0}
-        "12": {x: 320, y: 220, angle_deg: 0}
-        "13": {x: 320, y: 220, angle_deg: 0}
-        "14": {x: 320, y: 220, angle_deg: 0}
+        west_east: {x: 320, y: 220, angle_deg: 0}
+        north_south: {x: 320, y: 220, angle_deg: 90}
         default: {x: 320, y: 220, angle_deg: 0}
       right_bottom:
-        "11": {x: 320, y: 230, angle_deg: 180}
-        "12": {x: 320, y: 230, angle_deg: 180}
-        "13": {x: 320, y: 230, angle_deg: 180}
-        "14": {x: 320, y: 230, angle_deg: 180}
+        west_east: {x: 320, y: 230, angle_deg: 180}
+        north_south: {x: 320, y: 230, angle_deg: -90}
         default: {x: 320, y: 230, angle_deg: 180}

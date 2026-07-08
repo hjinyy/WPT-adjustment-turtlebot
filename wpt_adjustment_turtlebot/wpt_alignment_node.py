@@ -14,13 +14,15 @@ import yaml
 from .controller_math import (
     AlignmentState,
     TagObservation,
+    TagPairObservation,
     TargetPoseInImage,
     VelocityCommand,
     compute_alignment_cmd,
-    compute_alignment_error,
+    compute_pair_alignment_error,
+    compute_pair_observation,
     is_aligned,
 )
-from .tag_layout import coil_tag_id, head_tag_id
+from .tag_layout import coil_pair_ids
 
 try:
     import rclpy
@@ -112,7 +114,7 @@ class WptAlignmentNode(Node):
         if override_dry is not None:
             self.config["safety"]["dry_run"] = bool(override_dry)
         self.target_shelf = int(self.get_parameter("target_shelf").value)
-        self.state = AlignmentState.SEARCH_HEAD_TAG
+        self.state = AlignmentState.ENTER_SHELF
         self.stable_count = 0
         self.last_seen_time = time.monotonic()
         self.active_coil_camera = None
@@ -161,35 +163,23 @@ class WptAlignmentNode(Node):
         if self._tag_lost_too_long():
             self.get_logger().warning("AprilTag lost timeout; stopping")
             return VelocityCommand()
-        if self.state == AlignmentState.SEARCH_HEAD_TAG:
-            head_obs = self._find(obs, head_tag_id(self.target_shelf), camera="front")
-            if head_obs:
-                self.state = AlignmentState.APPROACH_SHELF
-                self.get_logger().info("target head tag found")
-                return VelocityCommand()
-            return VelocityCommand(linear_x=float(self.config["speed"]["corridor_linear"]))
-        if self.state == AlignmentState.APPROACH_SHELF:
-            head_obs = self._find(obs, head_tag_id(self.target_shelf), camera="front")
-            if not head_obs:
-                return VelocityCommand()
-            err = compute_alignment_error(head_obs, self._target_for("front", "head"))
-            if is_aligned(err, **self._thresholds("head")):
-                self.state = AlignmentState.ENTER_SHELF
-                return VelocityCommand()
-            return compute_alignment_cmd(err, **self._control_params("head"))
         if self.state == AlignmentState.ENTER_SHELF:
-            coil_obs = self._find_any_target_coil_tag(obs)
-            if coil_obs:
-                self.active_coil_camera = coil_obs.camera_name
+            pair_name = self._final_pair_name()
+            pair = self._find_target_pair(obs, pair_name)
+            if pair:
+                self.active_coil_camera = pair.camera_name
                 self.state = AlignmentState.ALIGN_COIL
                 return VelocityCommand()
-            return VelocityCommand(linear_x=float(self.config["speed"]["shelf_entry_linear"]))
+            if self._has_any_pair_marker(obs, pair_name):
+                return VelocityCommand()
+            return VelocityCommand(linear_x=float(self.config["speed"]["corridor_linear"]))
         if self.state == AlignmentState.ALIGN_COIL:
-            coil_obs = self._find_any_target_coil_tag(obs, self.active_coil_camera)
-            if not coil_obs:
+            pair_name = self._final_pair_name()
+            pair = self._find_target_pair(obs, pair_name, self.active_coil_camera)
+            if not pair:
                 self.stable_count = 0
                 return VelocityCommand()
-            err = compute_alignment_error(coil_obs, self._target_for(coil_obs.camera_name, str(coil_obs.tag_id)))
+            err = compute_pair_alignment_error(pair, self._target_for(pair.camera_name, pair_name))
             if is_aligned(err, **self._thresholds("coil")):
                 self.stable_count += 1
                 if self.stable_count >= int(self.config["alignment"]["stable_frames_required"]):
@@ -217,14 +207,35 @@ class WptAlignmentNode(Node):
         candidates = [o for o in obs if o.tag_id == tag_id and (camera is None or o.camera_name == camera)]
         return max(candidates, key=lambda o: o.area_px, default=None)
 
-    def _find_any_target_coil_tag(self, obs: list[TagObservation], preferred_camera: str | None = None) -> TagObservation | None:
-        target_ids = {coil_tag_id(self.target_shelf, p) for p in ("north", "south", "west", "east")}
-        candidates = [o for o in obs if o.tag_id in target_ids]
+    def _find_target_pair(
+        self, obs: list[TagObservation], pair_name: str, preferred_camera: str | None = None
+    ) -> TagPairObservation | None:
+        first_id, second_id = self._pair_ids(pair_name)
+        camera_names = sorted({o.camera_name for o in obs if o.camera_name})
         if preferred_camera:
-            preferred = [o for o in candidates if o.camera_name == preferred_camera]
-            if preferred:
-                candidates = preferred
-        return max(candidates, key=lambda o: o.area_px, default=None)
+            camera_names = [preferred_camera]
+        best_pair = None
+        best_area = -1.0
+        for camera_name in camera_names:
+            first = self._find(obs, first_id, camera=camera_name)
+            second = self._find(obs, second_id, camera=camera_name)
+            if first is None or second is None:
+                continue
+            area = first.area_px + second.area_px
+            if area > best_area:
+                best_pair = compute_pair_observation(first, second)
+                best_area = area
+        return best_pair
+
+    def _has_any_pair_marker(self, obs: list[TagObservation], pair_name: str) -> bool:
+        first_id, second_id = self._pair_ids(pair_name)
+        return any(o.tag_id in {first_id, second_id} for o in obs)
+
+    def _final_pair_name(self) -> str:
+        return str(self.config["alignment"].get("final_pair", "west_east"))
+
+    def _pair_ids(self, pair_name: str) -> tuple[int, int]:
+        return coil_pair_ids(self.target_shelf, pair_name)
 
     def _target_for(self, camera: str, tag_key: str) -> TargetPoseInImage:
         shelf_cfg = self.config["shelves"][str(self.target_shelf)]
@@ -255,7 +266,7 @@ class WptAlignmentNode(Node):
 
     def _tag_lost_too_long(self) -> bool:
         timeout = float(self.config["safety"].get("tag_lost_timeout_sec", 2.0))
-        return (time.monotonic() - self.last_seen_time) > timeout and self.state not in {AlignmentState.SEARCH_HEAD_TAG, AlignmentState.CHARGING}
+        return (time.monotonic() - self.last_seen_time) > timeout and self.state not in {AlignmentState.ENTER_SHELF, AlignmentState.CHARGING}
 
 
 def _load_yaml(path: str) -> dict[str, Any]:
