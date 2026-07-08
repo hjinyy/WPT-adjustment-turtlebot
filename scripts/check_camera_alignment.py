@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--require-front-cell", action="store_true", help="Require a front-camera marker in a specific grid cell.")
     parser.add_argument("--front-camera", default="front", help="Camera name used by --require-front-cell.")
     parser.add_argument("--front-tag-id", type=int, default=11, help="Marker ID required by --require-front-cell.")
-    parser.add_argument("--front-cell", default="1,2", help="Required front marker grid cell as row,col.")
+    parser.add_argument("--front-cell", default="2,2", help="Required front marker grid cell as row,col.")
     parser.add_argument("--log-file", default="", help="Optional CSV file for cross-camera pair status.")
     parser.add_argument("--output-dir", default="camera_alignment_check", help="Annotated image output directory.")
     parser.add_argument("--no-save", action="store_true", help="Do not save annotated images.")
@@ -269,7 +269,7 @@ def cross_camera_pair_status(
     require_front_cell: bool = False,
     front_camera: str = "front",
     front_tag_id: int = 11,
-    front_cell: tuple[int, int] = (1, 2),
+    front_cell: tuple[int, int] = (2, 2),
 ) -> dict[str, object]:
     first_id, second_id = four_coil_pair_ids(target_coil, pair_name)
     first = best_observation(observations, first_id)
@@ -337,7 +337,7 @@ def report_cross_camera_pair(
     require_front_cell: bool = False,
     front_camera: str = "front",
     front_tag_id: int = 11,
-    front_cell: tuple[int, int] = (1, 2),
+    front_cell: tuple[int, int] = (2, 2),
 ) -> dict[str, object]:
     status = cross_camera_pair_status(
         observations,
