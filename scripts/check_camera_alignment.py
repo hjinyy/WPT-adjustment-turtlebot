@@ -80,18 +80,22 @@ def fourcc_to_str(value: float) -> str:
 
 
 def read_all_camera_frames(cameras: dict[str, cv2.VideoCapture], retries: int) -> dict[str, tuple[bool, object | None]]:
-    frames: dict[str, tuple[bool, object | None]] = {}
-    for camera_name, cap in cameras.items():
-        ok = False
-        frame = None
-        for _ in range(max(1, retries)):
-            grabbed = cap.grab()
-            if grabbed:
-                ok, frame = cap.retrieve()
+    frames: dict[str, tuple[bool, object | None]] = {camera_name: (False, None) for camera_name in cameras}
+    for _ in range(max(1, retries)):
+        grabbed = {
+            camera_name: cap.grab()
+            for camera_name, cap in cameras.items()
+            if not frames[camera_name][0]
+        }
+        for camera_name, cap in cameras.items():
+            if frames[camera_name][0] or not grabbed.get(camera_name, False):
+                continue
+            ok, frame = cap.retrieve()
             if ok:
-                break
-            time.sleep(0.05)
-        frames[camera_name] = (ok, frame)
+                frames[camera_name] = (True, frame)
+        if all(ok for ok, _frame in frames.values()):
+            break
+        time.sleep(0.03)
     return frames
 
 
@@ -202,6 +206,36 @@ def report_camera(
     return observations, pair, aligned
 
 
+def report_cross_camera_pair(observations: list[TagObservation], target_coil: str, pair_name: str) -> None:
+    first_id, second_id = four_coil_pair_ids(target_coil, pair_name)
+    first = best_observation(observations, first_id)
+    second = best_observation(observations, second_id)
+    visible_ids = sorted({obs.tag_id for obs in observations})
+    if first is None or second is None:
+        missing = [str(tag_id) for tag_id, obs in ((first_id, first), (second_id, second)) if obs is None]
+        print(
+            f"\n[cross_camera] selected_pair={pair_name} required_ids=({first_id},{second_id}) "
+            f"visible_ids={visible_ids} pair_presence=False missing_ids=({','.join(missing)})"
+        )
+        return
+
+    same_camera = first.camera_name == second.camera_name
+    print(
+        f"\n[cross_camera] selected_pair={pair_name} required_ids=({first_id},{second_id}) "
+        f"visible_ids={visible_ids} pair_presence=True same_camera={same_camera}"
+    )
+    print(
+        f"  marker_a=id={first.tag_id} camera={first.camera_name} "
+        f"center=({first.center_x:.1f},{first.center_y:.1f})"
+    )
+    print(
+        f"  marker_b=id={second.tag_id} camera={second.camera_name} "
+        f"center=({second.center_x:.1f},{second.center_y:.1f})"
+    )
+    if not same_camera:
+        print("  geometric_alignment=False reason=different_camera_coordinate_frames")
+
+
 def main() -> int:
     args = parse_args()
     config = load_config(args.config)
@@ -232,16 +266,19 @@ def main() -> int:
         for frame_index in range(args.frames):
             print(f"\n=== frame {frame_index} ===")
             frames = read_all_camera_frames(cameras, args.read_retries)
+            frame_observations = []
             for camera_name, (ok, frame) in frames.items():
                 if not ok:
                     print(f"\n[{camera_name}] read=False aligned=False")
                     continue
                 observations, _pair, aligned = report_camera(config, detector, camera_name, frame, target_coil, pair_name)
+                frame_observations.extend(observations)
                 if not args.no_save:
                     annotated = annotate(frame.copy(), observations, required_ids, aligned)
                     out = output_dir / f"{camera_name}_frame_{frame_index}.jpg"
                     cv2.imwrite(str(out), annotated)
                     print(f"  saved={out}")
+            report_cross_camera_pair(frame_observations, target_coil, pair_name)
             if frame_index + 1 < args.frames:
                 time.sleep(args.delay)
     finally:

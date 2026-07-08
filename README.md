@@ -55,7 +55,7 @@ python3 scripts/check_camera_alignment.py \
   --output-dir camera_alignment_check
 ```
 
-현재 기본 카메라 번호는 `front=/dev/video0`, `right_bottom=/dev/video2`, `left_bottom=/dev/video4`입니다. 출력에는 각 카메라의 detected tag ID, `coil_1 west/east` 같은 tag 의미, pair midpoint, pair angle, x/y/angle error, `aligned=True/False`가 표시됩니다. 목표 pair 중 하나만 보이면 `missing_marker`로 표시되고 정합은 `False`입니다.
+현재 기본 카메라 번호는 `front=/dev/video4`, `right_bottom=/dev/video2`, `left_bottom=/dev/video0`입니다. 3개 카메라를 동시에 안정적으로 읽기 위해 기본 해상도는 `320x240`, `10fps`, `MJPG`로 낮춰 둡니다. 출력에는 각 카메라의 detected tag ID, `coil_1 west/east` 같은 tag 의미, pair midpoint, pair angle, x/y/angle error, `aligned=True/False`가 표시됩니다. 목표 pair 중 하나만 보이면 `missing_marker`로 표시되고 정합은 `False`입니다.
 
 ## Four Coil Marker IDs
 
