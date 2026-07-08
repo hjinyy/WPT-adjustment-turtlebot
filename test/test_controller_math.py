@@ -6,6 +6,7 @@ from wpt_adjustment_turtlebot.controller_math import (
     compute_alignment_error,
     compute_pair_alignment_error,
     compute_pair_observation,
+    grid_cell,
     is_aligned,
 )
 from wpt_adjustment_turtlebot.tag_layout import coil_pair_ids, coil_tag_id, decode_coil_tag
@@ -46,6 +47,13 @@ def test_pair_alignment_angle_error():
     assert err.x == 0
     assert err.y == 0
     assert err.angle_deg == 0
+
+
+def test_grid_cell_center_and_corners():
+    assert grid_cell(320, 240, 640, 480) == (2, 2)
+    assert grid_cell(0, 0, 640, 480) == (1, 1)
+    assert grid_cell(639, 479, 640, 480) == (3, 3)
+    assert grid_cell(640, 480, 640, 480) == (3, 3)
 
 
 def test_angle_wraparound():

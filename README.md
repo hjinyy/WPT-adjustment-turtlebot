@@ -44,6 +44,67 @@ ros2 run wpt_adjustment_turtlebot wpt_alignment_node \
 
 처음에는 `config/wpt_alignment.yaml`의 `dry_run: true` 상태로 로그만 확인하세요. 실제 구동 전 카메라 번호, `/cmd_vel` 토픽명, 제어 부호를 반드시 확인해야 합니다.
 
+## 라즈베리파이 접속 및 카메라 실험
+
+로봇에 올라간 라즈베리파이에서 실제 카메라 3대로 태그 인식/정합 실험을 할 수 있습니다.
+
+```bash
+ssh super2gl@192.168.0.5
+# 비밀번호: 1234
+```
+
+> 이 저장소는 public이라 이 비밀번호도 그대로 노출됩니다. 다른 곳에 같은 비밀번호를 쓰고 있다면 바꾸는 걸 권장합니다.
+
+### 카메라 포트 매핑
+
+USB 카메라 3대가 아래처럼 연결되어 있습니다 (`/dev/video<번호>` 기준):
+
+| 방향 | 포트(장치 번호) |
+|---|---:|
+| 정면 (front) | 0 |
+| 오른쪽 (right) | 2 |
+| 왼쪽 (left) | 4 |
+
+(`/dev/video1`, `3`, `5`는 같은 카메라들의 메타데이터 노드라 캡처용으로 쓰지 않습니다.) 접속 후 아래로 장치가 3개 다 잡히는지 먼저 확인하세요.
+
+```bash
+ls -l /dev/video0 /dev/video2 /dev/video4
+who   # 다른 세션이 카메라를 이미 쓰고 있는지 확인 (V4L2 장치는 동시에 못 엽니다)
+```
+
+라즈베리파이의 OpenCV(4.5.4)는 최신 `cv2.aruco.ArucoDetector` 클래스가 없어서, 구버전 `cv2.aruco.detectMarkers` API로 자동 대체되도록 코드에 이미 반영했습니다. 별도 설치 없이 바로 동작하지만, 인식 정확도를 높이고 싶다면 다음을 설치하세요.
+
+```bash
+pip3 install pupil-apriltags
+```
+
+### 3x3 그리드 정합 실험
+
+각 카메라 화면을 3x3 격자로 나누고, 정면/오른쪽/왼쪽 카메라 모두에서 태그가 동시에 목표 칸(기본값: 중앙 (2,2))에 들어오면 "정합"으로 판단합니다. 목표 칸은 실제 실험 결과에 따라 바뀔 수 있으므로 `--target-row`/`--target-col`로 조정할 수 있게 만들어 두었습니다.
+
+```bash
+cd ~/wpt_ws/src/WPT-adjustment-turtlebot   # colcon build로 패키지가 설치되어 있어야 import가 됩니다
+python3 scripts/camera_grid_alignment.py
+# 특정 칸을 목표로 바꾸고 싶을 때
+python3 scripts/camera_grid_alignment.py --target-row 2 --target-col 2
+```
+
+터미널에는 매 프레임 아래처럼 상태가 출력됩니다.
+
+```text
+target=(2, 2) front: id=None cell=None - | right: id=14 cell=(2, 2) ALIGNED | left: id=13 cell=(1, 2) - -> ALL_ALIGNED=False
+```
+
+화면으로 직접 보고 싶으면 `--show` 옵션을 추가하세요. 단, `cv2.imshow`는 GUI가 있어야 동작하므로 순수 SSH 터미널 세션만으로는 뜨지 않습니다. 아래 둘 중 하나가 필요합니다.
+
+1. 라즈베리파이에 모니터를 연결하고 데스크톱 환경에서 직접 실행
+2. Mac/Windows에서 X11 forwarding으로 접속: `ssh -X super2gl@192.168.0.5` (Mac은 XQuartz, Windows는 VcXsrv/MobaXterm 등 X서버가 미리 떠 있어야 합니다) 후 동일하게 `--show` 옵션으로 실행
+
+```bash
+python3 scripts/camera_grid_alignment.py --show
+# 창에서 q 키로 종료
+```
+
 ## 문서
 
 - `docs/apriltag_plan.md`: AprilTag ID/제작 계획

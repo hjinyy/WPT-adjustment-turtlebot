@@ -62,6 +62,17 @@ class AprilTagDetector:
                 params = cv2.aruco.DetectorParameters()
                 self.detector = cv2.aruco.ArucoDetector(dictionary, params)
                 self.backend = "opencv_aruco"
+        elif hasattr(cv2, "aruco") and hasattr(cv2.aruco, "detectMarkers"):
+            # Older OpenCV (e.g. 4.5.x on Raspberry Pi OS) predates the ArucoDetector class.
+            dictionary_id = getattr(cv2.aruco, "DICT_APRILTAG_36h11", None)
+            if dictionary_id is not None:
+                self.dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
+                if hasattr(cv2.aruco, "DetectorParameters_create"):
+                    self.params = cv2.aruco.DetectorParameters_create()
+                else:
+                    self.params = cv2.aruco.DetectorParameters()
+                self.detector = cv2.aruco
+                self.backend = "opencv_aruco_legacy"
 
     def detect(self, frame_bgr) -> list[Detection]:
         if self.detector is None:
@@ -69,7 +80,10 @@ class AprilTagDetector:
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         if self.backend == "pupil_apriltags":
             return [self._from_pupil(d) for d in self.detector.detect(gray)]
-        corners, ids, _ = self.detector.detectMarkers(gray)
+        if self.backend == "opencv_aruco_legacy":
+            corners, ids, _ = self.detector.detectMarkers(gray, self.dictionary, parameters=self.params)
+        else:
+            corners, ids, _ = self.detector.detectMarkers(gray)
         if ids is None:
             return []
         return [self._from_corners(int(i[0]), [(float(x), float(y)) for x, y in c.reshape(-1, 2)]) for c, i in zip(corners, ids)]

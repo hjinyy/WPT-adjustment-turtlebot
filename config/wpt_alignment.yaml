@@ -10,8 +10,8 @@ safety:
 
 cameras:
   front: {device: 0, width: 640, height: 480}
-  left_bottom: {device: 1, width: 640, height: 480}
   right_bottom: {device: 2, width: 640, height: 480}
+  left_bottom: {device: 4, width: 640, height: 480}
 
 speed:
   corridor_linear: 0.06

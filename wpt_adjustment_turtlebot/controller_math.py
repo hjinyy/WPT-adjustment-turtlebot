@@ -95,6 +95,13 @@ def is_aligned(err: AlignmentError, threshold_x_px: float, threshold_y_px: float
     return abs(err.x) <= threshold_x_px and abs(err.y) <= threshold_y_px and abs(err.angle_deg) <= threshold_angle_deg
 
 
+def grid_cell(x: float, y: float, width: float, height: float, grid_size: int = 3) -> tuple[int, int]:
+    """1-indexed (row, col) of the grid_size x grid_size cell containing (x, y) in a width x height frame."""
+    col = min(grid_size, max(1, int(x / width * grid_size) + 1))
+    row = min(grid_size, max(1, int(y / height * grid_size) + 1))
+    return row, col
+
+
 def compute_alignment_cmd(
     err: AlignmentError,
     *,
