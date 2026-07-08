@@ -40,7 +40,7 @@ Tag West □    ◎    □ Tag East
            Tag South
 ```
 
-로봇이 어느 방향(북/남/서/동)에서 선반에 진입할지 알 수 없으므로, 전방 카메라 1대 + 하부/측면 카메라 2대로 마주보는 두 태그를 한 쌍(pair)으로 인식해 정합합니다. 기본 페어는 `west_east`(`alignment.final_pair`, `config/wpt_alignment.yaml`)이며, 두 태그의 중점(midpoint)과 두 태그를 잇는 각도(pair angle)를 정합 기준으로 사용합니다. 자세한 알고리즘은 `docs/algorithm.md` 참고.
+로봇이 어느 방향(북/남/서/동)에서 선반에 진입할지 알 수 없으므로, 전방 카메라 1대 + 하부/측면 카메라 2대로 마주보는 두 태그를 한 쌍(pair)으로 인식해 정합하는 정밀 방식을 ROS2 노드(`wpt_alignment_node`)에 구현해 뒀습니다. 기본 페어는 `west_east`(`alignment.final_pair`, `config/wpt_alignment.yaml`)이며, 두 태그의 중점(midpoint)과 두 태그를 잇는 각도(pair angle)를 정합 기준으로 사용합니다. 자세한 알고리즘은 `docs/algorithm.md` 참고. 다만 현재 실제 실험은 이 노드 없이 3x3 그리드 방식으로 진행 중입니다 — README 참고.
 
 ## 4. 출력 권장
 
