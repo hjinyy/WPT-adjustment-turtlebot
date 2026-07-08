@@ -41,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frames", type=int, default=1, help="Number of diagnostic frames to capture.")
     parser.add_argument("--warmup", type=int, default=10, help="Frames to discard before checking.")
     parser.add_argument("--delay", type=float, default=0.2, help="Delay between diagnostic frames.")
+    parser.add_argument("--read-retries", type=int, default=3, help="Retries when a camera frame read times out.")
     parser.add_argument("--output-dir", default="camera_alignment_check", help="Annotated image output directory.")
     parser.add_argument("--no-save", action="store_true", help="Do not save annotated images.")
     return parser.parse_args()
@@ -54,13 +55,44 @@ def load_config(path: str) -> dict:
 def open_camera(name: str, cfg: dict) -> cv2.VideoCapture:
     device = int(cfg["device"])
     cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
+    if cfg.get("fourcc"):
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*str(cfg["fourcc"])[:4]))
     if cfg.get("width"):
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(cfg["width"]))
     if cfg.get("height"):
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(cfg["height"]))
+    if cfg.get("fps"):
+        cap.set(cv2.CAP_PROP_FPS, float(cfg["fps"]))
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if not cap.isOpened():
         raise RuntimeError(f"{name}: cannot open /dev/video{device}")
+    print(
+        f"opened {name}: /dev/video{device} "
+        f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} "
+        f"fps={cap.get(cv2.CAP_PROP_FPS):.1f} fourcc={fourcc_to_str(cap.get(cv2.CAP_PROP_FOURCC))}"
+    )
     return cap
+
+
+def fourcc_to_str(value: float) -> str:
+    code = int(value)
+    return "".join(chr((code >> 8 * i) & 0xFF) for i in range(4)).strip()
+
+
+def read_all_camera_frames(cameras: dict[str, cv2.VideoCapture], retries: int) -> dict[str, tuple[bool, object | None]]:
+    frames: dict[str, tuple[bool, object | None]] = {}
+    for camera_name, cap in cameras.items():
+        ok = False
+        frame = None
+        for _ in range(max(1, retries)):
+            grabbed = cap.grab()
+            if grabbed:
+                ok, frame = cap.retrieve()
+            if ok:
+                break
+            time.sleep(0.05)
+        frames[camera_name] = (ok, frame)
+    return frames
 
 
 def detect_frame(detector: AprilTagDetector, camera_name: str, frame) -> list[TagObservation]:
@@ -194,14 +226,13 @@ def main() -> int:
             cameras[camera_name] = open_camera(camera_name, camera_cfg)
 
         for _ in range(max(0, args.warmup)):
-            for cap in cameras.values():
-                cap.read()
+            read_all_camera_frames(cameras, args.read_retries)
             time.sleep(0.03)
 
         for frame_index in range(args.frames):
             print(f"\n=== frame {frame_index} ===")
-            for camera_name, cap in cameras.items():
-                ok, frame = cap.read()
+            frames = read_all_camera_frames(cameras, args.read_retries)
+            for camera_name, (ok, frame) in frames.items():
                 if not ok:
                     print(f"\n[{camera_name}] read=False aligned=False")
                     continue

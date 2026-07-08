@@ -156,10 +156,15 @@ class WptAlignmentNode(Node):
         cameras = {}
         for name, cfg in self.config["cameras"].items():
             cap = cv2.VideoCapture(cfg["device"], cv2.CAP_V4L2)
+            if cfg.get("fourcc"):
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*str(cfg["fourcc"])[:4]))
             if cfg.get("width"):
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(cfg["width"]))
             if cfg.get("height"):
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(cfg["height"]))
+            if cfg.get("fps"):
+                cap.set(cv2.CAP_PROP_FPS, float(cfg["fps"]))
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             if not cap.isOpened():
                 self.get_logger().warning(f"Camera {name} device {cfg['device']} is not open")
             cameras[name] = cap
@@ -177,9 +182,14 @@ class WptAlignmentNode(Node):
 
     def read_all_tags(self) -> list[TagObservation]:
         observations: list[TagObservation] = []
+        grabbed = {cam_name: cap.grab() for cam_name, cap in self.cameras.items()}
         for cam_name, cap in self.cameras.items():
-            ok, frame = cap.read()
+            if not grabbed.get(cam_name, False):
+                self.get_logger().warning(f"Camera {cam_name} grab failed")
+                continue
+            ok, frame = cap.retrieve()
             if not ok:
+                self.get_logger().warning(f"Camera {cam_name} retrieve failed")
                 continue
             for det in self.detector.detect(frame):
                 observations.append(TagObservation(det.tag_id, det.center[0], det.center[1], det.angle_deg, det.area_px, cam_name))

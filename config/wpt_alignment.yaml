@@ -12,9 +12,9 @@ safety:
   tag_lost_timeout_sec: 1.0
 
 cameras:
-  front: {device: 0, width: 640, height: 480}
-  right_bottom: {device: 2, width: 640, height: 480}
-  left_bottom: {device: 4, width: 640, height: 480}
+  front: {device: 0, width: 640, height: 480, fps: 15, fourcc: MJPG}
+  right_bottom: {device: 2, width: 640, height: 480, fps: 15, fourcc: MJPG}
+  left_bottom: {device: 4, width: 640, height: 480, fps: 15, fourcc: MJPG}
 
 speed:
   corridor_linear: 0.06
