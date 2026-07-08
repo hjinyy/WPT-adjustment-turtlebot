@@ -15,10 +15,10 @@ target_coil: coil_1
 
 | Coil | Shelf 위치 | North | East | South | West |
 |---|---|---:|---:|---:|---:|
-| `coil_1` | (1,1) | 11 | 12 | 13 | 14 |
-| `coil_2` | (1,2) | 21 | 22 | 23 | 24 |
-| `coil_3` | (2,1) | 31 | 32 | 33 | 34 |
-| `coil_4` | (2,2) | 41 | 42 | 43 | 44 |
+| `coil_1` | (1,1) | 11 | 14 | 12 | 13 |
+| `coil_2` | (1,2) | 21 | 24 | 22 | 23 |
+| `coil_3` | (2,1) | 31 | 34 | 32 | 33 |
+| `coil_4` | (2,2) | 41 | 44 | 42 | 43 |
 
 ## 3. Pair 사용 규칙
 
@@ -31,11 +31,11 @@ target_coil: coil_1
 
 | Coil | Pair | 실제 marker IDs |
 |---|---|---:|
-| `coil_1` | west_east | 14, 12 |
-| `coil_1` | north_south | 11, 13 |
-| `coil_2` | west_east | 24, 22 |
-| `coil_3` | north_south | 31, 33 |
-| `coil_4` | west_east | 44, 42 |
+| `coil_1` | west_east | 13, 14 |
+| `coil_1` | north_south | 11, 12 |
+| `coil_2` | west_east | 23, 24 |
+| `coil_3` | north_south | 31, 32 |
+| `coil_4` | west_east | 43, 44 |
 
 ## 4. 설정 예시
 

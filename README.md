@@ -63,12 +63,12 @@ python3 scripts/check_camera_alignment.py \
 
 | Coil | Shelf 위치 | North | East | South | West |
 |---|---|---:|---:|---:|---:|
-| `coil_1` | (1,1) | 11 | 12 | 13 | 14 |
-| `coil_2` | (1,2) | 21 | 22 | 23 | 24 |
-| `coil_3` | (2,1) | 31 | 32 | 33 | 34 |
-| `coil_4` | (2,2) | 41 | 42 | 43 | 44 |
+| `coil_1` | (1,1) | 11 | 14 | 12 | 13 |
+| `coil_2` | (1,2) | 21 | 24 | 22 | 23 |
+| `coil_3` | (2,1) | 31 | 34 | 32 | 33 |
+| `coil_4` | (2,2) | 41 | 44 | 42 | 43 |
 
-WPT 최종 정합은 기본적으로 West/East pair를 사용합니다. 예를 들어 `coil_1`의 West/East pair는 marker `14`와 marker `12`입니다. 90도 회전 후 방향 검증에는 North/South pair를 쓰며, `coil_1`에서는 marker `11`과 marker `13`입니다.
+WPT 최종 정합은 기본적으로 West/East pair를 사용합니다. 예를 들어 `coil_1`의 West/East pair는 marker `13`과 marker `14`입니다. 90도 회전 후 방향 검증에는 North/South pair를 쓰며, `coil_1`에서는 marker `11`과 marker `12`입니다.
 
 ## 문서
 

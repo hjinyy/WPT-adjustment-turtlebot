@@ -53,10 +53,10 @@ STATION_TAGS = {
 }
 
 FOUR_COIL_TAGS = {
-    "coil_1": {"north": 11, "east": 12, "south": 13, "west": 14},
-    "coil_2": {"north": 21, "east": 22, "south": 23, "west": 24},
-    "coil_3": {"north": 31, "east": 32, "south": 33, "west": 34},
-    "coil_4": {"north": 41, "east": 42, "south": 43, "west": 44},
+    "coil_1": {"north": 11, "south": 12, "west": 13, "east": 14},
+    "coil_2": {"north": 21, "south": 22, "west": 23, "east": 24},
+    "coil_3": {"north": 31, "south": 32, "west": 33, "east": 34},
+    "coil_4": {"north": 41, "south": 42, "west": 43, "east": 44},
 }
 
 

@@ -48,15 +48,15 @@ def test_station_map_id_rules():
 
 def test_four_coil_map_id_rules():
     assert four_coil_tag_id("coil_1", "north") == 11
-    assert four_coil_tag_id("coil_1", "east") == 12
-    assert four_coil_tag_id("coil_1", "south") == 13
-    assert four_coil_tag_id("coil_1", "west") == 14
-    assert four_coil_pair_ids("coil_1", "west_east") == (14, 12)
-    assert four_coil_pair_ids("coil_1", "north_south") == (11, 13)
-    assert four_coil_pair_ids("coil_2", "west_east") == (24, 22)
-    assert four_coil_pair_ids("coil_3", "north_south") == (31, 33)
-    assert four_coil_pair_ids("coil_4", "west_east") == (44, 42)
-    assert decode_four_coil_tag(42) == ("coil_4", "east")
+    assert four_coil_tag_id("coil_1", "south") == 12
+    assert four_coil_tag_id("coil_1", "west") == 13
+    assert four_coil_tag_id("coil_1", "east") == 14
+    assert four_coil_pair_ids("coil_1", "west_east") == (13, 14)
+    assert four_coil_pair_ids("coil_1", "north_south") == (11, 12)
+    assert four_coil_pair_ids("coil_2", "west_east") == (23, 24)
+    assert four_coil_pair_ids("coil_3", "north_south") == (31, 32)
+    assert four_coil_pair_ids("coil_4", "west_east") == (43, 44)
+    assert decode_four_coil_tag(44) == ("coil_4", "east")
     assert decode_four_coil_tag(5) is None
 
 

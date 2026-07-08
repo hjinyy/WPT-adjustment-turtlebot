@@ -28,8 +28,8 @@ y_error = pair_midpoint_y - target_y
 angle_error = normalize(pair_angle - target_angle)
 ```
 
-최종 WPT 정합에는 West/East pair를 기본으로 사용합니다. `coil_1`에서는 실제 marker ID `14`, `12`를 동시에 인식해야 합니다.
-90도 회전 후 방향 검증에는 North/South pair를 사용합니다. `coil_1`에서는 marker `11`, `13`입니다.
+최종 WPT 정합에는 West/East pair를 기본으로 사용합니다. `coil_1`에서는 실제 marker ID `13`, `14`를 동시에 인식해야 합니다.
+90도 회전 후 방향 검증에는 North/South pair를 사용합니다. `coil_1`에서는 marker `11`, `12`입니다.
 
 ## 4. 속도 변환
 

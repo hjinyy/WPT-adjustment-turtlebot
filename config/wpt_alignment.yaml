@@ -38,7 +38,7 @@ alignment:
 coils:
   coil_1:
     label: shelf_1_1
-    markers: {north: 11, east: 12, south: 13, west: 14}
+    markers: {north: 11, south: 12, west: 13, east: 14}
     targets:
       front:
         default: {x: 320, y: 240, angle_deg: 0}
@@ -52,7 +52,7 @@ coils:
         default: {x: 320, y: 230, angle_deg: 180}
   coil_2:
     label: shelf_1_2
-    markers: {north: 21, east: 22, south: 23, west: 24}
+    markers: {north: 21, south: 22, west: 23, east: 24}
     targets:
       front:
         default: {x: 320, y: 240, angle_deg: 0}
@@ -66,7 +66,7 @@ coils:
         default: {x: 320, y: 230, angle_deg: 180}
   coil_3:
     label: shelf_2_1
-    markers: {north: 31, east: 32, south: 33, west: 34}
+    markers: {north: 31, south: 32, west: 33, east: 34}
     targets:
       front:
         default: {x: 320, y: 240, angle_deg: 0}
@@ -80,7 +80,7 @@ coils:
         default: {x: 320, y: 230, angle_deg: 180}
   coil_4:
     label: shelf_2_2
-    markers: {north: 41, east: 42, south: 43, west: 44}
+    markers: {north: 41, south: 42, west: 43, east: 44}
     targets:
       front:
         default: {x: 320, y: 240, angle_deg: 0}
