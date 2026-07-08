@@ -1,51 +1,26 @@
-# AprilTag Station Map 계획
+# AprilTag 4-Coil Layout 계획
 
 ## 1. 기본 원칙
 
-현재 물리 floor layout은 `apriltag_sheet.pdf`에 인쇄된 numeric marker ID를 그대로 사용합니다. `A02N`, `A02E` 같은 문자열은 사람이 읽는 station label이고, AprilTag detector가 반환하는 값은 숫자 ID입니다.
+현재 물리 layout은 복도 주행 없이 4개 WPT 코일 사이에서 정합하는 구조입니다. 각 코일 주변에 north/east/south/west marker 4개를 배치하고, 전체적으로 16개 AprilTag marker만 사용합니다.
 
-예:
+코드 기본값은 다음과 같습니다.
 
-| Label | 의미 | 실제 marker ID |
-|---|---|---:|
-| A02N | A02 station north marker | 5 |
-| A02E | A02 station east marker | 6 |
-| A02S | A02 station south marker | 7 |
-| A02W | A02 station west marker | 8 |
+```yaml
+layout_mode: four_coil_map
+target_coil: coil_1
+```
 
-기존 `111/112/113/114` 방식은 backwards compatibility 용도로만 남기고, 실제 실험의 기본값은 station map입니다.
+## 2. Marker ID Map
 
-## 2. Floor Node Markers
+| Coil | Shelf 위치 | North | East | South | West |
+|---|---|---:|---:|---:|---:|
+| `coil_1` | (1,1) | 11 | 12 | 13 | 14 |
+| `coil_2` | (1,2) | 21 | 22 | 23 | 24 |
+| `coil_3` | (2,1) | 31 | 32 | 33 | 34 |
+| `coil_4` | (2,2) | 41 | 42 | 43 | 44 |
 
-| Node | ID |
-|---|---:|
-| A01 | 1 |
-| B01 | 2 |
-| C01 | 3 |
-| D01 | 4 |
-| D02 | 17 |
-| A03 | 18 |
-| B03 | 19 |
-| C03 | 20 |
-| D04 | 37 |
-| A05 | 38 |
-| B05 | 39 |
-| C05 | 40 |
-| D05 | 41 |
-
-## 3. Station Markers
-
-| Station | North | East | South | West |
-|---|---:|---:|---:|---:|
-| A02 | 5 | 6 | 7 | 8 |
-| B02 | 9 | 10 | 11 | 12 |
-| C02 | 13 | 14 | 15 | 16 |
-| D03 | 21 | 22 | 23 | 24 |
-| A04 | 25 | 26 | 27 | 28 |
-| B04 | 29 | 30 | 31 | 32 |
-| C04 | 33 | 34 | 35 | 36 |
-
-## 4. Pair 사용 규칙
+## 3. Pair 사용 규칙
 
 최종 WPT 코일 정합에는 단일 tag가 아니라 두 tag pair를 사용합니다.
 
@@ -54,20 +29,23 @@
 
 예:
 
-| Station | Pair | 실제 marker IDs |
+| Coil | Pair | 실제 marker IDs |
 |---|---|---:|
-| A02 | west_east | 8, 6 |
-| A02 | north_south | 5, 7 |
-| B02 | west_east | 12, 10 |
-| C04 | north_south | 33, 35 |
+| `coil_1` | west_east | 14, 12 |
+| `coil_1` | north_south | 11, 13 |
+| `coil_2` | west_east | 24, 22 |
+| `coil_3` | north_south | 31, 33 |
+| `coil_4` | west_east | 44, 42 |
 
-## 5. 설정
+## 4. 설정 예시
 
 ```yaml
-layout_mode: station_map
-target_station: A02
+layout_mode: four_coil_map
+target_coil: coil_1
 
 alignment:
   final_pair: west_east
   rotation_verify_pair: north_south
 ```
+
+`target_coil`을 `coil_1`, `coil_2`, `coil_3`, `coil_4` 중 하나로 바꾸면 같은 pair 정합 로직으로 다른 코일을 목표로 사용할 수 있습니다.

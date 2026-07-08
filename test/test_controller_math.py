@@ -11,8 +11,11 @@ from wpt_adjustment_turtlebot.controller_math import (
 from wpt_adjustment_turtlebot.tag_layout import (
     coil_pair_ids,
     coil_tag_id,
+    decode_four_coil_tag,
     decode_coil_tag,
     decode_station_tag,
+    four_coil_pair_ids,
+    four_coil_tag_id,
     head_tag_id,
     station_pair_ids,
     station_tag_id,
@@ -41,6 +44,20 @@ def test_station_map_id_rules():
     assert station_pair_ids("C04", "north_south") == (33, 35)
     assert decode_station_tag(6) == ("A02", "east")
     assert decode_station_tag(113) is None
+
+
+def test_four_coil_map_id_rules():
+    assert four_coil_tag_id("coil_1", "north") == 11
+    assert four_coil_tag_id("coil_1", "east") == 12
+    assert four_coil_tag_id("coil_1", "south") == 13
+    assert four_coil_tag_id("coil_1", "west") == 14
+    assert four_coil_pair_ids("coil_1", "west_east") == (14, 12)
+    assert four_coil_pair_ids("coil_1", "north_south") == (11, 13)
+    assert four_coil_pair_ids("coil_2", "west_east") == (24, 22)
+    assert four_coil_pair_ids("coil_3", "north_south") == (31, 33)
+    assert four_coil_pair_ids("coil_4", "west_east") == (44, 42)
+    assert decode_four_coil_tag(42) == ("coil_4", "east")
+    assert decode_four_coil_tag(5) is None
 
 
 def test_angle_wraparound():

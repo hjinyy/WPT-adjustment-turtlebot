@@ -1,8 +1,8 @@
 ros:
   cmd_vel_topic: /cmd_vel
 
-layout_mode: station_map
-target_station: A02
+layout_mode: four_coil_map
+target_coil: coil_1
 
 apriltag:
   family: tag36h11
@@ -13,8 +13,8 @@ safety:
 
 cameras:
   front: {device: 0, width: 640, height: 480}
-  left_bottom: {device: 1, width: 640, height: 480}
   right_bottom: {device: 2, width: 640, height: 480}
+  left_bottom: {device: 4, width: 640, height: 480}
 
 speed:
   corridor_linear: 0.06
@@ -34,6 +34,64 @@ alignment:
   rotation_verify_pair: north_south
   head: {threshold_x_px: 25, threshold_y_px: 25, threshold_angle_deg: 8}
   coil: {threshold_x_px: 7, threshold_y_px: 7, threshold_angle_deg: 2.0}
+
+coils:
+  coil_1:
+    label: shelf_1_1
+    markers: {north: 11, east: 12, south: 13, west: 14}
+    targets:
+      front:
+        default: {x: 320, y: 240, angle_deg: 0}
+      left_bottom:
+        west_east: {x: 320, y: 220, angle_deg: 0}
+        north_south: {x: 320, y: 220, angle_deg: 90}
+        default: {x: 320, y: 220, angle_deg: 0}
+      right_bottom:
+        west_east: {x: 320, y: 230, angle_deg: 180}
+        north_south: {x: 320, y: 230, angle_deg: -90}
+        default: {x: 320, y: 230, angle_deg: 180}
+  coil_2:
+    label: shelf_1_2
+    markers: {north: 21, east: 22, south: 23, west: 24}
+    targets:
+      front:
+        default: {x: 320, y: 240, angle_deg: 0}
+      left_bottom:
+        west_east: {x: 320, y: 220, angle_deg: 0}
+        north_south: {x: 320, y: 220, angle_deg: 90}
+        default: {x: 320, y: 220, angle_deg: 0}
+      right_bottom:
+        west_east: {x: 320, y: 230, angle_deg: 180}
+        north_south: {x: 320, y: 230, angle_deg: -90}
+        default: {x: 320, y: 230, angle_deg: 180}
+  coil_3:
+    label: shelf_2_1
+    markers: {north: 31, east: 32, south: 33, west: 34}
+    targets:
+      front:
+        default: {x: 320, y: 240, angle_deg: 0}
+      left_bottom:
+        west_east: {x: 320, y: 220, angle_deg: 0}
+        north_south: {x: 320, y: 220, angle_deg: 90}
+        default: {x: 320, y: 220, angle_deg: 0}
+      right_bottom:
+        west_east: {x: 320, y: 230, angle_deg: 180}
+        north_south: {x: 320, y: 230, angle_deg: -90}
+        default: {x: 320, y: 230, angle_deg: 180}
+  coil_4:
+    label: shelf_2_2
+    markers: {north: 41, east: 42, south: 43, west: 44}
+    targets:
+      front:
+        default: {x: 320, y: 240, angle_deg: 0}
+      left_bottom:
+        west_east: {x: 320, y: 220, angle_deg: 0}
+        north_south: {x: 320, y: 220, angle_deg: 90}
+        default: {x: 320, y: 220, angle_deg: 0}
+      right_bottom:
+        west_east: {x: 320, y: 230, angle_deg: 180}
+        north_south: {x: 320, y: 230, angle_deg: -90}
+        default: {x: 320, y: 230, angle_deg: 180}
 
 control:
   loop_hz: 10.0
@@ -55,40 +113,3 @@ control:
     angle_deadband_deg: 0.8
     invert_linear: false
     invert_angular: false
-
-shelves:
-  "1":
-    targets:
-      front:
-        head: {x: 320, y: 240, angle_deg: 0}
-        default: {x: 320, y: 240, angle_deg: 0}
-      left_bottom:
-        "111": {x: 320, y: 220, angle_deg: 0}
-        "112": {x: 320, y: 220, angle_deg: 0}
-        "113": {x: 320, y: 220, angle_deg: 0}
-        "114": {x: 320, y: 220, angle_deg: 0}
-        west_east: {x: 320, y: 220, angle_deg: 0}
-        north_south: {x: 320, y: 220, angle_deg: 90}
-        default: {x: 320, y: 220, angle_deg: 0}
-      right_bottom:
-        "111": {x: 320, y: 230, angle_deg: 180}
-        "112": {x: 320, y: 230, angle_deg: 180}
-        "113": {x: 320, y: 230, angle_deg: 180}
-        "114": {x: 320, y: 230, angle_deg: 180}
-        west_east: {x: 320, y: 230, angle_deg: 180}
-        north_south: {x: 320, y: 230, angle_deg: -90}
-        default: {x: 320, y: 230, angle_deg: 180}
-
-stations:
-  A02:
-    targets:
-      front:
-        default: {x: 320, y: 240, angle_deg: 0}
-      left_bottom:
-        west_east: {x: 320, y: 220, angle_deg: 0}
-        north_south: {x: 320, y: 220, angle_deg: 90}
-        default: {x: 320, y: 220, angle_deg: 0}
-      right_bottom:
-        west_east: {x: 320, y: 230, angle_deg: 180}
-        north_south: {x: 320, y: 230, angle_deg: -90}
-        default: {x: 320, y: 230, angle_deg: 180}

@@ -23,7 +23,7 @@ from .controller_math import (
     compute_pair_observation,
     is_aligned,
 )
-from .tag_layout import coil_pair_ids, head_tag_id, station_pair_ids
+from .tag_layout import coil_pair_ids, four_coil_pair_ids, head_tag_id, station_pair_ids
 
 try:
     import rclpy
@@ -120,6 +120,7 @@ class WptAlignmentNode(Node):
         self.declare_parameter("config_file", "")
         self.declare_parameter("target_shelf", 1)
         self.declare_parameter("target_station", "")
+        self.declare_parameter("target_coil", "")
         self.declare_parameter("dry_run", None)
         config_file = self.get_parameter("config_file").get_parameter_value().string_value
         if not config_file:
@@ -132,16 +133,21 @@ class WptAlignmentNode(Node):
         if override_station:
             self.config["target_station"] = override_station
             self.config["layout_mode"] = "station_map"
+        override_coil = self.get_parameter("target_coil").get_parameter_value().string_value
+        if override_coil:
+            self.config["target_coil"] = override_coil
+            self.config["layout_mode"] = "four_coil_map"
         self.target_shelf = int(self.get_parameter("target_shelf").value)
-        self.layout_mode = str(self.config.get("layout_mode", "station_map"))
+        self.layout_mode = str(self.config.get("layout_mode", "four_coil_map"))
         self.target_station = str(self.config.get("target_station", "A02")).upper()
-        self.state = AlignmentState.ALIGN_COIL if self._is_station_map() else AlignmentState.SEARCH_HEAD_TAG
+        self.target_coil = str(self.config.get("target_coil", "coil_1")).lower()
+        self.state = AlignmentState.ALIGN_COIL if self._starts_at_alignment() else AlignmentState.SEARCH_HEAD_TAG
         self.stable_count = 0
         self.last_seen_time = time.monotonic()
         self.active_coil_camera = None
         self.detector = AprilTagDetector(self.config["apriltag"].get("family", "tag36h11"))
         self.get_logger().info(f"AprilTag backend: {self.detector.backend}")
-        self.get_logger().info(f"layout_mode={self.layout_mode} target_station={self.target_station}")
+        self.get_logger().info(f"layout_mode={self.layout_mode} target={self._target_name_for_log()}")
         self.cameras = self._open_cameras()
         self.cmd_pub = self.create_publisher(Twist, self.config["ros"].get("cmd_vel_topic", "/cmd_vel"), 10)
         self.timer = self.create_timer(1.0 / float(self.config["control"].get("loop_hz", 10.0)), self.step)
@@ -149,7 +155,7 @@ class WptAlignmentNode(Node):
     def _open_cameras(self) -> dict[str, cv2.VideoCapture]:
         cameras = {}
         for name, cfg in self.config["cameras"].items():
-            cap = cv2.VideoCapture(cfg["device"])
+            cap = cv2.VideoCapture(cfg["device"], cv2.CAP_V4L2)
             if cfg.get("width"):
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(cfg["width"]))
             if cfg.get("height"):
@@ -283,7 +289,10 @@ class WptAlignmentNode(Node):
         return any(o.tag_id in {first_id, second_id} for o in obs)
 
     def _target_for(self, camera: str, tag_key: str) -> TargetPoseInImage:
-        if self._is_station_map():
+        if self._is_four_coil_map():
+            coils = self.config["coils"]
+            target_cfg = coils.get(self.target_coil, coils.get("default", coils["coil_1"]))
+        elif self._is_station_map():
             stations = self.config["stations"]
             target_cfg = stations.get(self.target_station, stations.get("default", stations["A02"]))
         else:
@@ -297,7 +306,22 @@ class WptAlignmentNode(Node):
     def _is_station_map(self) -> bool:
         return self.layout_mode == "station_map"
 
+    def _is_four_coil_map(self) -> bool:
+        return self.layout_mode == "four_coil_map"
+
+    def _starts_at_alignment(self) -> bool:
+        return self._is_station_map() or self._is_four_coil_map()
+
+    def _target_name_for_log(self) -> str:
+        if self._is_four_coil_map():
+            return self.target_coil
+        if self._is_station_map():
+            return self.target_station
+        return f"shelf_{self.target_shelf}"
+
     def _pair_ids(self, pair_name: str) -> tuple[int, int]:
+        if self._is_four_coil_map():
+            return four_coil_pair_ids(self.target_coil, pair_name)
         if self._is_station_map():
             return station_pair_ids(self.target_station, pair_name)
         return coil_pair_ids(self.target_shelf, pair_name)
@@ -308,7 +332,7 @@ class WptAlignmentNode(Node):
             for o in obs
         )
         self.get_logger().info(
-            f"calib layout_mode={self.layout_mode} target_station={self.target_station} "
+            f"calib layout_mode={self.layout_mode} target={self._target_name_for_log()} "
             f"state={self.state.value} detected_tags=[{tags}]"
         )
 
@@ -319,7 +343,7 @@ class WptAlignmentNode(Node):
             f"id={o.tag_id} cam={o.camera_name} center=({o.center_x:.1f},{o.center_y:.1f})" for o in visible
         )
         self.get_logger().info(
-            f"calib layout_mode={self.layout_mode} target_station={self.target_station} state={self.state.value} "
+            f"calib layout_mode={self.layout_mode} target={self._target_name_for_log()} state={self.state.value} "
             f"selected_pair={pair_name} required_ids=({first_id},{second_id}) "
             f"pair_missing visible_marker_ids=[{visible_text}] stable_count={self.stable_count}"
         )
@@ -330,7 +354,7 @@ class WptAlignmentNode(Node):
         if err is not None:
             err_text = f"x_error={err.x:.2f} y_error={err.y:.2f} angle_error={err.angle_deg:.2f}"
         self.get_logger().info(
-            f"calib layout_mode={self.layout_mode} target_station={self.target_station} state={self.state.value} "
+            f"calib layout_mode={self.layout_mode} target={self._target_name_for_log()} state={self.state.value} "
             f"selected_pair={pair_name} required_ids=({first_id},{second_id}) camera={pair.camera_name} "
             f"marker_a=id={pair.first.tag_id} center=({pair.first.center_x:.1f},{pair.first.center_y:.1f}) "
             f"marker_b=id={pair.second.tag_id} center=({pair.second.center_x:.1f},{pair.second.center_y:.1f}) "

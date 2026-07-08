@@ -1,8 +1,8 @@
 """AprilTag ID layout helpers.
 
 Recommended physical layout:
-- station map IDs are the numeric marker IDs printed in apriltag_sheet.pdf.
-- labels such as A02N are human-readable station/position names.
+- four coil map uses 16 markers around four WPT coils.
+- marker IDs are grouped by coil: 11-14, 21-24, 31-34, 41-44.
 
 Backwards-compatible shelf rule:
 - head tag: 100 + shelf_number
@@ -52,6 +52,13 @@ STATION_TAGS = {
     "C04": {"north": 33, "east": 34, "south": 35, "west": 36},
 }
 
+FOUR_COIL_TAGS = {
+    "coil_1": {"north": 11, "east": 12, "south": 13, "west": 14},
+    "coil_2": {"north": 21, "east": 22, "south": 23, "west": 24},
+    "coil_3": {"north": 31, "east": 32, "south": 33, "west": 34},
+    "coil_4": {"north": 41, "east": 42, "south": 43, "west": 44},
+}
+
 
 @dataclass(frozen=True)
 class ShelfTagSet:
@@ -85,6 +92,15 @@ def station_pair_ids(station_name: str, pair_name: str) -> tuple[int, int]:
     return station_tag_id(station_name, positions[0]), station_tag_id(station_name, positions[1])
 
 
+def four_coil_tag_id(coil_name: str, position: str) -> int:
+    return FOUR_COIL_TAGS[coil_name.lower()][position.lower()]
+
+
+def four_coil_pair_ids(coil_name: str, pair_name: str) -> tuple[int, int]:
+    positions = PAIR_TO_POSITIONS[pair_name]
+    return four_coil_tag_id(coil_name, positions[0]), four_coil_tag_id(coil_name, positions[1])
+
+
 def tag_set_for_shelf(shelf: int) -> ShelfTagSet:
     return ShelfTagSet(
         shelf=int(shelf),
@@ -114,4 +130,13 @@ def decode_station_tag(tag_id: int) -> tuple[str, str] | None:
         for position, marker_id in positions.items():
             if marker_id == tag_id:
                 return station_name, position
+    return None
+
+
+def decode_four_coil_tag(tag_id: int) -> tuple[str, str] | None:
+    tag_id = int(tag_id)
+    for coil_name, positions in FOUR_COIL_TAGS.items():
+        for position, marker_id in positions.items():
+            if marker_id == tag_id:
+                return coil_name, position
     return None

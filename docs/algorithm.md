@@ -6,13 +6,13 @@
 ALIGN_COIL → FINAL_STOP → CHARGING
 ```
 
-`layout_mode: station_map`에서는 `apriltag_sheet.pdf`의 station marker pair를 직접 사용하므로 최종 정합 상태에서 시작합니다. 기존 shelf/head-tag 방식은 backwards compatibility 용도로 남아 있습니다.
+`layout_mode: four_coil_map`에서는 4개 코일 주변의 16개 marker 중 목표 코일의 pair를 직접 사용하므로 최종 정합 상태에서 시작합니다. 기존 shelf/head-tag 방식과 station map 방식은 backwards compatibility 용도로 남아 있습니다.
 
 ## 2. 상태별 판단 및 구동
 
 | 상태 | 판단 기준 | 구동 명령 |
 |---|---|---|
-| `ALIGN_COIL` | target station의 tag pair midpoint/angle 오차 | `/cmd_vel`로 전후진/회전 보정 |
+| `ALIGN_COIL` | target coil의 tag pair midpoint/angle 오차 | `/cmd_vel`로 전후진/회전 보정 |
 | `FINAL_STOP` | N프레임 연속 정합 완료 | 정지 명령 |
 | `CHARGING` | 정지 상태 유지 | WPT 충전 인터페이스 ON |
 
@@ -28,8 +28,8 @@ y_error = pair_midpoint_y - target_y
 angle_error = normalize(pair_angle - target_angle)
 ```
 
-최종 WPT 정합에는 West/East pair를 기본으로 사용합니다. `A02`에서는 실제 numeric marker ID `8`, `6`을 동시에 인식해야 합니다.
-90도 회전 후 방향 검증에는 North/South pair를 사용합니다. `A02`에서는 marker `5`, `7`입니다.
+최종 WPT 정합에는 West/East pair를 기본으로 사용합니다. `coil_1`에서는 실제 marker ID `14`, `12`를 동시에 인식해야 합니다.
+90도 회전 후 방향 검증에는 North/South pair를 사용합니다. `coil_1`에서는 marker `11`, `13`입니다.
 
 ## 4. 속도 변환
 
