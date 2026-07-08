@@ -8,6 +8,7 @@ This is a dry-run diagnostic script. It does not use ROS and never publishes
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 import time
 from pathlib import Path
@@ -42,6 +43,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=10, help="Frames to discard before checking.")
     parser.add_argument("--delay", type=float, default=0.2, help="Delay between diagnostic frames.")
     parser.add_argument("--read-retries", type=int, default=3, help="Retries when a camera frame read times out.")
+    parser.add_argument("--cross-camera-only", action="store_true", help="Only print cross-camera pair status.")
+    parser.add_argument("--log-file", default="", help="Optional CSV file for cross-camera pair status.")
     parser.add_argument("--output-dir", default="camera_alignment_check", help="Annotated image output directory.")
     parser.add_argument("--no-save", action="store_true", help="Do not save annotated images.")
     return parser.parse_args()
@@ -180,8 +183,8 @@ def report_camera(
     first = best_observation(observations, first_id)
     second = best_observation(observations, second_id)
     if first is None or second is None:
-        missing = [str(tag_id) for tag_id, obs in ((first_id, first), (second_id, second)) if obs is None]
-        print(f"  pair_status=missing_marker missing_ids=({','.join(missing)}) aligned=False")
+        visible_pair_ids = [obs.tag_id for obs in observations if obs.tag_id in {first_id, second_id}]
+        print(f"  camera_pair_view=partial_or_none visible_pair_ids={visible_pair_ids}")
         return observations, None, False
 
     pair = compute_pair_observation(first, second)
@@ -206,34 +209,87 @@ def report_camera(
     return observations, pair, aligned
 
 
-def report_cross_camera_pair(observations: list[TagObservation], target_coil: str, pair_name: str) -> None:
+def cross_camera_pair_status(observations: list[TagObservation], target_coil: str, pair_name: str) -> dict[str, object]:
     first_id, second_id = four_coil_pair_ids(target_coil, pair_name)
     first = best_observation(observations, first_id)
     second = best_observation(observations, second_id)
     visible_ids = sorted({obs.tag_id for obs in observations})
-    if first is None or second is None:
-        missing = [str(tag_id) for tag_id, obs in ((first_id, first), (second_id, second)) if obs is None]
+    status: dict[str, object] = {
+        "pair": pair_name,
+        "first_id": first_id,
+        "second_id": second_id,
+        "visible_ids": visible_ids,
+        "pair_presence": first is not None and second is not None,
+        "aligned": first is not None and second is not None,
+        "first_camera": "" if first is None else first.camera_name,
+        "first_x": "" if first is None else first.center_x,
+        "first_y": "" if first is None else first.center_y,
+        "second_camera": "" if second is None else second.camera_name,
+        "second_x": "" if second is None else second.center_x,
+        "second_y": "" if second is None else second.center_y,
+        "missing_ids": [tag_id for tag_id, obs in ((first_id, first), (second_id, second)) if obs is None],
+    }
+    return status
+
+
+def report_cross_camera_pair(observations: list[TagObservation], target_coil: str, pair_name: str) -> dict[str, object]:
+    status = cross_camera_pair_status(observations, target_coil, pair_name)
+    first_id = int(status["first_id"])
+    second_id = int(status["second_id"])
+    visible_ids = status["visible_ids"]
+    if not status["pair_presence"]:
         print(
             f"\n[cross_camera] selected_pair={pair_name} required_ids=({first_id},{second_id}) "
-            f"visible_ids={visible_ids} pair_presence=False missing_ids=({','.join(missing)})"
+            f"visible_ids={visible_ids} pair_presence=False aligned=False "
+            f"missing_ids=({','.join(str(x) for x in status['missing_ids'])})"
         )
-        return
+        return status
 
-    same_camera = first.camera_name == second.camera_name
     print(
         f"\n[cross_camera] selected_pair={pair_name} required_ids=({first_id},{second_id}) "
-        f"visible_ids={visible_ids} pair_presence=True same_camera={same_camera}"
+        f"visible_ids={visible_ids} pair_presence=True aligned=True"
     )
     print(
-        f"  marker_a=id={first.tag_id} camera={first.camera_name} "
-        f"center=({first.center_x:.1f},{first.center_y:.1f})"
+        f"  marker_a=id={first_id} camera={status['first_camera']} "
+        f"center=({float(status['first_x']):.1f},{float(status['first_y']):.1f})"
     )
     print(
-        f"  marker_b=id={second.tag_id} camera={second.camera_name} "
-        f"center=({second.center_x:.1f},{second.center_y:.1f})"
+        f"  marker_b=id={second_id} camera={status['second_camera']} "
+        f"center=({float(status['second_x']):.1f},{float(status['second_y']):.1f})"
     )
-    if not same_camera:
-        print("  geometric_alignment=False reason=different_camera_coordinate_frames")
+    return status
+
+
+def print_cross_camera_line(frame_index: int, elapsed_sec: float, status: dict[str, object]) -> None:
+    print(
+        f"t={elapsed_sec:.2f}s frame={frame_index} "
+        f"pair_presence={status['pair_presence']} aligned={status['aligned']} "
+        f"id{status['first_id']}_camera={status['first_camera'] or 'None'} "
+        f"id{status['second_id']}_camera={status['second_camera'] or 'None'} "
+        f"missing={status['missing_ids']}"
+    )
+
+
+def write_cross_camera_row(writer, frame_index: int, elapsed_sec: float, status: dict[str, object]) -> None:
+    writer.writerow(
+        {
+            "elapsed_sec": f"{elapsed_sec:.3f}",
+            "frame": frame_index,
+            "pair": status["pair"],
+            "pair_presence": status["pair_presence"],
+            "aligned": status["aligned"],
+            "first_id": status["first_id"],
+            "first_camera": status["first_camera"],
+            "first_x": "" if status["first_x"] == "" else f"{float(status['first_x']):.2f}",
+            "first_y": "" if status["first_y"] == "" else f"{float(status['first_y']):.2f}",
+            "second_id": status["second_id"],
+            "second_camera": status["second_camera"],
+            "second_x": "" if status["second_x"] == "" else f"{float(status['second_x']):.2f}",
+            "second_y": "" if status["second_y"] == "" else f"{float(status['second_y']):.2f}",
+            "visible_ids": " ".join(str(tag_id) for tag_id in status["visible_ids"]),
+            "missing_ids": " ".join(str(tag_id) for tag_id in status["missing_ids"]),
+        }
+    )
 
 
 def main() -> int:
@@ -251,11 +307,38 @@ def main() -> int:
     print("cmd_vel_publish=False")
 
     output_dir = Path(args.output_dir)
-    if not args.no_save:
+    save_images = not args.no_save and not args.cross_camera_only
+    if save_images:
         output_dir.mkdir(parents=True, exist_ok=True)
 
     cameras = {}
+    log_file = None
+    csv_writer = None
     try:
+        if args.log_file:
+            log_file = open(args.log_file, "w", newline="", encoding="utf-8")
+            csv_writer = csv.DictWriter(
+                log_file,
+                fieldnames=[
+                    "elapsed_sec",
+                    "frame",
+                    "pair",
+                    "pair_presence",
+                    "aligned",
+                    "first_id",
+                    "first_camera",
+                    "first_x",
+                    "first_y",
+                    "second_id",
+                    "second_camera",
+                    "second_x",
+                    "second_y",
+                    "visible_ids",
+                    "missing_ids",
+                ],
+            )
+            csv_writer.writeheader()
+
         for camera_name, camera_cfg in config["cameras"].items():
             cameras[camera_name] = open_camera(camera_name, camera_cfg)
 
@@ -263,25 +346,42 @@ def main() -> int:
             read_all_camera_frames(cameras, args.read_retries)
             time.sleep(0.03)
 
+        start_time = time.monotonic()
         for frame_index in range(args.frames):
-            print(f"\n=== frame {frame_index} ===")
+            if not args.cross_camera_only:
+                print(f"\n=== frame {frame_index} ===")
             frames = read_all_camera_frames(cameras, args.read_retries)
             frame_observations = []
             for camera_name, (ok, frame) in frames.items():
                 if not ok:
-                    print(f"\n[{camera_name}] read=False aligned=False")
+                    if not args.cross_camera_only:
+                        print(f"\n[{camera_name}] read=False aligned=False")
                     continue
-                observations, _pair, aligned = report_camera(config, detector, camera_name, frame, target_coil, pair_name)
+                if args.cross_camera_only:
+                    observations = detect_frame(detector, camera_name, frame)
+                    aligned = False
+                else:
+                    observations, _pair, aligned = report_camera(config, detector, camera_name, frame, target_coil, pair_name)
                 frame_observations.extend(observations)
-                if not args.no_save:
+                if save_images:
                     annotated = annotate(frame.copy(), observations, required_ids, aligned)
                     out = output_dir / f"{camera_name}_frame_{frame_index}.jpg"
                     cv2.imwrite(str(out), annotated)
                     print(f"  saved={out}")
-            report_cross_camera_pair(frame_observations, target_coil, pair_name)
+            elapsed_sec = time.monotonic() - start_time
+            if args.cross_camera_only:
+                status = cross_camera_pair_status(frame_observations, target_coil, pair_name)
+                print_cross_camera_line(frame_index, elapsed_sec, status)
+            else:
+                status = report_cross_camera_pair(frame_observations, target_coil, pair_name)
+            if csv_writer is not None:
+                write_cross_camera_row(csv_writer, frame_index, elapsed_sec, status)
+                log_file.flush()
             if frame_index + 1 < args.frames:
                 time.sleep(args.delay)
     finally:
+        if log_file is not None:
+            log_file.close()
         for cap in cameras.values():
             cap.release()
 
