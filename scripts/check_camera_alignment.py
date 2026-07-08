@@ -44,6 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--delay", type=float, default=0.2, help="Delay between diagnostic frames.")
     parser.add_argument("--read-retries", type=int, default=3, help="Retries when a camera frame read times out.")
     parser.add_argument("--cross-camera-only", action="store_true", help="Only print cross-camera pair status.")
+    parser.add_argument("--require-center-cell", action="store_true", help="Require both pair markers to be in the center cell of a 3x3 camera grid.")
+    parser.add_argument("--grid-size", type=int, default=3, help="Grid size for --require-center-cell.")
     parser.add_argument("--log-file", default="", help="Optional CSV file for cross-camera pair status.")
     parser.add_argument("--output-dir", default="camera_alignment_check", help="Annotated image output directory.")
     parser.add_argument("--no-save", action="store_true", help="Do not save annotated images.")
@@ -130,6 +132,20 @@ def best_observation(observations: list[TagObservation], tag_id: int) -> TagObse
     return max(candidates, key=lambda o: o.area_px, default=None)
 
 
+def center_cell_status(obs: TagObservation | None, config: dict, grid_size: int) -> tuple[bool, str]:
+    if obs is None:
+        return False, ""
+    camera_cfg = config["cameras"][obs.camera_name]
+    width = float(camera_cfg["width"])
+    height = float(camera_cfg["height"])
+    cell_w = width / grid_size
+    cell_h = height / grid_size
+    col = min(grid_size, max(1, int(obs.center_x // cell_w) + 1))
+    row = min(grid_size, max(1, int(obs.center_y // cell_h) + 1))
+    center_index = (grid_size + 1) // 2
+    return row == center_index and col == center_index, f"({row},{col})"
+
+
 def describe_tag(tag_id: int) -> str:
     decoded = decode_four_coil_tag(tag_id)
     if decoded is None:
@@ -209,31 +225,66 @@ def report_camera(
     return observations, pair, aligned
 
 
-def cross_camera_pair_status(observations: list[TagObservation], target_coil: str, pair_name: str) -> dict[str, object]:
+def cross_camera_pair_status(
+    observations: list[TagObservation],
+    target_coil: str,
+    pair_name: str,
+    config: dict,
+    *,
+    require_center_cell: bool = False,
+    grid_size: int = 3,
+) -> dict[str, object]:
     first_id, second_id = four_coil_pair_ids(target_coil, pair_name)
     first = best_observation(observations, first_id)
     second = best_observation(observations, second_id)
     visible_ids = sorted({obs.tag_id for obs in observations})
+    first_center_ok, first_cell = center_cell_status(first, config, grid_size)
+    second_center_ok, second_cell = center_cell_status(second, config, grid_size)
+    pair_presence = first is not None and second is not None
+    center_cells_ok = first_center_ok and second_center_ok
+    aligned = pair_presence and (center_cells_ok if require_center_cell else True)
     status: dict[str, object] = {
         "pair": pair_name,
         "first_id": first_id,
         "second_id": second_id,
         "visible_ids": visible_ids,
-        "pair_presence": first is not None and second is not None,
-        "aligned": first is not None and second is not None,
+        "pair_presence": pair_presence,
+        "aligned": aligned,
+        "require_center_cell": require_center_cell,
+        "grid_size": grid_size,
+        "center_cells_ok": center_cells_ok,
         "first_camera": "" if first is None else first.camera_name,
         "first_x": "" if first is None else first.center_x,
         "first_y": "" if first is None else first.center_y,
+        "first_cell": first_cell,
+        "first_center_cell": first_center_ok,
         "second_camera": "" if second is None else second.camera_name,
         "second_x": "" if second is None else second.center_x,
         "second_y": "" if second is None else second.center_y,
+        "second_cell": second_cell,
+        "second_center_cell": second_center_ok,
         "missing_ids": [tag_id for tag_id, obs in ((first_id, first), (second_id, second)) if obs is None],
     }
     return status
 
 
-def report_cross_camera_pair(observations: list[TagObservation], target_coil: str, pair_name: str) -> dict[str, object]:
-    status = cross_camera_pair_status(observations, target_coil, pair_name)
+def report_cross_camera_pair(
+    observations: list[TagObservation],
+    target_coil: str,
+    pair_name: str,
+    config: dict,
+    *,
+    require_center_cell: bool = False,
+    grid_size: int = 3,
+) -> dict[str, object]:
+    status = cross_camera_pair_status(
+        observations,
+        target_coil,
+        pair_name,
+        config,
+        require_center_cell=require_center_cell,
+        grid_size=grid_size,
+    )
     first_id = int(status["first_id"])
     second_id = int(status["second_id"])
     visible_ids = status["visible_ids"]
@@ -247,15 +298,18 @@ def report_cross_camera_pair(observations: list[TagObservation], target_coil: st
 
     print(
         f"\n[cross_camera] selected_pair={pair_name} required_ids=({first_id},{second_id}) "
-        f"visible_ids={visible_ids} pair_presence=True aligned=True"
+        f"visible_ids={visible_ids} pair_presence=True aligned={status['aligned']} "
+        f"center_cells_ok={status['center_cells_ok']}"
     )
     print(
         f"  marker_a=id={first_id} camera={status['first_camera']} "
-        f"center=({float(status['first_x']):.1f},{float(status['first_y']):.1f})"
+        f"center=({float(status['first_x']):.1f},{float(status['first_y']):.1f}) "
+        f"cell={status['first_cell']}"
     )
     print(
         f"  marker_b=id={second_id} camera={status['second_camera']} "
-        f"center=({float(status['second_x']):.1f},{float(status['second_y']):.1f})"
+        f"center=({float(status['second_x']):.1f},{float(status['second_y']):.1f}) "
+        f"cell={status['second_cell']}"
     )
     return status
 
@@ -265,7 +319,10 @@ def print_cross_camera_line(frame_index: int, elapsed_sec: float, status: dict[s
         f"t={elapsed_sec:.2f}s frame={frame_index} "
         f"pair_presence={status['pair_presence']} aligned={status['aligned']} "
         f"id{status['first_id']}_camera={status['first_camera'] or 'None'} "
+        f"id{status['first_id']}_cell={status['first_cell'] or 'None'} "
         f"id{status['second_id']}_camera={status['second_camera'] or 'None'} "
+        f"id{status['second_id']}_cell={status['second_cell'] or 'None'} "
+        f"center_cells_ok={status['center_cells_ok']} "
         f"missing={status['missing_ids']}"
     )
 
@@ -282,10 +339,16 @@ def write_cross_camera_row(writer, frame_index: int, elapsed_sec: float, status:
             "first_camera": status["first_camera"],
             "first_x": "" if status["first_x"] == "" else f"{float(status['first_x']):.2f}",
             "first_y": "" if status["first_y"] == "" else f"{float(status['first_y']):.2f}",
+            "first_cell": status["first_cell"],
+            "first_center_cell": status["first_center_cell"],
             "second_id": status["second_id"],
             "second_camera": status["second_camera"],
             "second_x": "" if status["second_x"] == "" else f"{float(status['second_x']):.2f}",
             "second_y": "" if status["second_y"] == "" else f"{float(status['second_y']):.2f}",
+            "second_cell": status["second_cell"],
+            "second_center_cell": status["second_center_cell"],
+            "center_cells_ok": status["center_cells_ok"],
+            "require_center_cell": status["require_center_cell"],
             "visible_ids": " ".join(str(tag_id) for tag_id in status["visible_ids"]),
             "missing_ids": " ".join(str(tag_id) for tag_id in status["missing_ids"]),
         }
@@ -329,10 +392,16 @@ def main() -> int:
                     "first_camera",
                     "first_x",
                     "first_y",
+                    "first_cell",
+                    "first_center_cell",
                     "second_id",
                     "second_camera",
                     "second_x",
                     "second_y",
+                    "second_cell",
+                    "second_center_cell",
+                    "center_cells_ok",
+                    "require_center_cell",
                     "visible_ids",
                     "missing_ids",
                 ],
@@ -370,10 +439,24 @@ def main() -> int:
                     print(f"  saved={out}")
             elapsed_sec = time.monotonic() - start_time
             if args.cross_camera_only:
-                status = cross_camera_pair_status(frame_observations, target_coil, pair_name)
+                status = cross_camera_pair_status(
+                    frame_observations,
+                    target_coil,
+                    pair_name,
+                    config,
+                    require_center_cell=args.require_center_cell,
+                    grid_size=args.grid_size,
+                )
                 print_cross_camera_line(frame_index, elapsed_sec, status)
             else:
-                status = report_cross_camera_pair(frame_observations, target_coil, pair_name)
+                status = report_cross_camera_pair(
+                    frame_observations,
+                    target_coil,
+                    pair_name,
+                    config,
+                    require_center_cell=args.require_center_cell,
+                    grid_size=args.grid_size,
+                )
             if csv_writer is not None:
                 write_cross_camera_row(csv_writer, frame_index, elapsed_sec, status)
                 log_file.flush()
