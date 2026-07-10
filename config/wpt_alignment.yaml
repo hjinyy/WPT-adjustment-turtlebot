@@ -40,6 +40,14 @@ alignment:
   rotation_verify_pair: north_south
   head: {threshold_x_px: 12, threshold_y_px: 12, threshold_angle_deg: 8}
   coil: {threshold_x_px: 4, threshold_y_px: 4, threshold_angle_deg: 2.0}
+  # SEARCH_COIL (coarse approach while the pair isn't visible) and the ALIGN_COIL
+  # occlusion recovery back-off. See docs/algorithm.md "coil search / recovery".
+  search:
+    burst_linear: 0.03           # m/s during a forward search burst, no rotation
+    burst_duration_sec: 0.6
+    pause_duration_sec: 0.6      # stopped; only look for tags during this window
+    recover_reverse_duration_sec: 0.4  # undo the last ALIGN_COIL move before searching again
+    max_duration_sec: 20.0       # safety cap; state -> ERROR if exceeded
 
 # Pixel targets below are tuned for the 320x240 capture size above. Re-calibrate
 # per docs/calibration.md if the resolution changes.

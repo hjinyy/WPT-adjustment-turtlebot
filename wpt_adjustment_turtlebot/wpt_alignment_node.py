@@ -141,10 +141,15 @@ class WptAlignmentNode(Node):
         self.layout_mode = str(self.config.get("layout_mode", "four_coil_map"))
         self.target_station = str(self.config.get("target_station", "A02")).upper()
         self.target_coil = str(self.config.get("target_coil", "coil_1")).lower()
-        self.state = AlignmentState.ALIGN_COIL if self._starts_at_alignment() else AlignmentState.SEARCH_HEAD_TAG
+        self.state = AlignmentState.SEARCH_COIL if self._starts_at_alignment() else AlignmentState.SEARCH_HEAD_TAG
         self.stable_count = 0
         self.last_seen_time = time.monotonic()
         self.active_coil_camera = None
+        self._last_cmd = VelocityCommand()
+        self._recovering_since: float | None = None
+        self._search_started_at: float | None = None
+        self._search_phase = "pause"
+        self._search_phase_until = 0.0
         self.detector = AprilTagDetector(self.config["apriltag"].get("family", "tag36h11"))
         self.get_logger().info(f"AprilTag backend: {self.detector.backend}")
         self.get_logger().info(f"layout_mode={self.layout_mode} target={self._target_name_for_log()}")
@@ -230,13 +235,15 @@ class WptAlignmentNode(Node):
                 self._log_pair_missing(pair_name, obs, self.active_coil_camera)
                 return VelocityCommand()
             return VelocityCommand(linear_x=float(self.config["speed"]["shelf_entry_linear"]))
+        if self.state == AlignmentState.SEARCH_COIL:
+            return self._search_coil_step(obs)
         if self.state == AlignmentState.ALIGN_COIL:
             pair_name = self._final_pair_name()
             pair = self._find_target_pair(obs, pair_name, self.active_coil_camera)
             if not pair:
-                self.stable_count = 0
-                self._log_pair_missing(pair_name, obs, self.active_coil_camera)
-                return VelocityCommand()
+                return self._recover_from_lost_pair(pair_name, obs)
+            self._recovering_since = None
+            self.active_coil_camera = pair.camera_name
             err = compute_pair_alignment_error(pair, self._target_for(pair.camera_name, pair_name))
             if is_aligned(err, **self._thresholds("coil")):
                 self.stable_count += 1
@@ -247,7 +254,9 @@ class WptAlignmentNode(Node):
             else:
                 self.stable_count = 0
             self._log_pair_alignment(pair_name, pair, err)
-            return compute_alignment_cmd(err, **self._control_params("coil"))
+            cmd = compute_alignment_cmd(err, **self._control_params("coil"))
+            self._last_cmd = cmd
+            return cmd
         if self.state == AlignmentState.FINAL_STOP:
             self.state = AlignmentState.CHARGING
             self.get_logger().info("WPT charging trigger should be enabled here")
@@ -297,6 +306,83 @@ class WptAlignmentNode(Node):
     def _has_any_pair_marker(self, obs: list[TagObservation], pair_name: str) -> bool:
         first_id, second_id = self._pair_ids(pair_name)
         return any(o.tag_id in {first_id, second_id} for o in obs)
+
+    def _search_config(self) -> dict[str, Any]:
+        return self.config["alignment"].get("search", {})
+
+    def _search_coil_step(self, obs: list[TagObservation]) -> VelocityCommand:
+        """Coarse approach while the target pair isn't visible yet (or was lost and
+        the short back-off in _recover_from_lost_pair didn't re-acquire it).
+
+        Alternates short straight bursts with stationary pauses instead of driving
+        and turning continuously, so we only ever look for tags while stopped -- a
+        wheel crossing in front of a low-mounted camera during a turn can't corrupt
+        a reading taken mid-motion if no reading is taken mid-motion.
+        """
+        now = time.monotonic()
+        if self._search_started_at is None:
+            self._search_started_at = now
+            self._search_phase = "pause"
+            self._search_phase_until = now
+
+        search_cfg = self._search_config()
+        max_duration = float(search_cfg.get("max_duration_sec", 20.0))
+        if now - self._search_started_at > max_duration:
+            self.get_logger().error(f"coil search exceeded {max_duration:.1f}s with no pair found; stopping")
+            self.state = AlignmentState.ERROR
+            return VelocityCommand()
+
+        pair_name = self._final_pair_name()
+        pair = self._find_target_pair(obs, pair_name)
+        if pair:
+            self.get_logger().info(f"coil pair {pair_name} acquired during search on camera {pair.camera_name}")
+            self.active_coil_camera = pair.camera_name
+            self.stable_count = 0
+            self._search_started_at = None
+            self.state = AlignmentState.ALIGN_COIL
+            return VelocityCommand()
+
+        any_marker = self._has_any_pair_marker(obs, pair_name)
+        burst_linear = float(search_cfg.get("burst_linear", self.config["speed"].get("shelf_entry_linear", 0.03)))
+        burst_duration = float(search_cfg.get("burst_duration_sec", 0.6))
+        pause_duration = float(search_cfg.get("pause_duration_sec", 0.6))
+
+        if now >= self._search_phase_until:
+            if self._search_phase == "drive":
+                self._search_phase = "pause"
+                self._search_phase_until = now + pause_duration
+            elif not any_marker:
+                self._search_phase = "drive"
+                self._search_phase_until = now + burst_duration
+            else:
+                # one side of the pair is visible -- hold here instead of advancing
+                # blindly and possibly overshooting or occluding it.
+                self._search_phase_until = now + pause_duration
+                self._log_pair_missing(pair_name, obs, None)
+
+        if self._search_phase == "drive":
+            return VelocityCommand(linear_x=burst_linear)
+        return VelocityCommand()
+
+    def _recover_from_lost_pair(self, pair_name: str, obs: list[TagObservation]) -> VelocityCommand:
+        """The pair was tracked in ALIGN_COIL and just disappeared -- most likely our
+        own last move (e.g. a wheel rotating through frame) occluded it. Undo that
+        move briefly before falling back to the slower SEARCH_COIL scan, instead of
+        either freezing in the occluded spot or continuing to command more rotation
+        blind.
+        """
+        self.stable_count = 0
+        self._log_pair_missing(pair_name, obs, self.active_coil_camera)
+        now = time.monotonic()
+        reverse_duration = float(self._search_config().get("recover_reverse_duration_sec", 0.4))
+        if self._recovering_since is None:
+            self._recovering_since = now
+        if now - self._recovering_since < reverse_duration:
+            return VelocityCommand(linear_x=-self._last_cmd.linear_x, angular_z=-self._last_cmd.angular_z)
+        self.active_coil_camera = None
+        self._recovering_since = None
+        self.state = AlignmentState.SEARCH_COIL
+        return VelocityCommand()
 
     def _target_for(self, camera: str, tag_key: str) -> TargetPoseInImage:
         if self._is_four_coil_map():
@@ -396,7 +482,8 @@ class WptAlignmentNode(Node):
 
     def _tag_lost_too_long(self) -> bool:
         timeout = float(self.config["safety"].get("tag_lost_timeout_sec", 2.0))
-        return (time.monotonic() - self.last_seen_time) > timeout and self.state not in {AlignmentState.SEARCH_HEAD_TAG, AlignmentState.CHARGING}
+        exempt = {AlignmentState.SEARCH_HEAD_TAG, AlignmentState.SEARCH_COIL, AlignmentState.CHARGING}
+        return (time.monotonic() - self.last_seen_time) > timeout and self.state not in exempt
 
 
 def _load_yaml(path: str) -> dict[str, Any]:
