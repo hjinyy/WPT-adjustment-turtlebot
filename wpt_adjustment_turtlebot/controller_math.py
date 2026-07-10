@@ -7,6 +7,8 @@ from math import atan2, copysign, degrees
 
 class AlignmentState(str, Enum):
     IDLE = "IDLE"
+    SEARCH_HEAD_TAG = "SEARCH_HEAD_TAG"
+    APPROACH_SHELF = "APPROACH_SHELF"
     ENTER_SHELF = "ENTER_SHELF"
     ALIGN_COIL = "ALIGN_COIL"
     FINAL_STOP = "FINAL_STOP"

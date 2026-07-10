@@ -13,16 +13,17 @@ import yaml
 
 from .controller_math import (
     AlignmentState,
-    TagObservation,
     TagPairObservation,
+    TagObservation,
     TargetPoseInImage,
     VelocityCommand,
     compute_alignment_cmd,
+    compute_alignment_error,
     compute_pair_alignment_error,
     compute_pair_observation,
     is_aligned,
 )
-from .tag_layout import coil_pair_ids
+from .tag_layout import coil_pair_ids, four_coil_pair_ids, head_tag_id, station_pair_ids
 
 try:
     import rclpy
@@ -63,7 +64,6 @@ class AprilTagDetector:
                 self.detector = cv2.aruco.ArucoDetector(dictionary, params)
                 self.backend = "opencv_aruco"
         elif hasattr(cv2, "aruco") and hasattr(cv2.aruco, "detectMarkers"):
-            # Older OpenCV (e.g. 4.5.x on Raspberry Pi OS) predates the ArucoDetector class.
             dictionary_id = getattr(cv2.aruco, "DICT_APRILTAG_36h11", None)
             if dictionary_id is not None:
                 self.dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
@@ -119,6 +119,8 @@ class WptAlignmentNode(Node):
         super().__init__("wpt_alignment_node")
         self.declare_parameter("config_file", "")
         self.declare_parameter("target_shelf", 1)
+        self.declare_parameter("target_station", "")
+        self.declare_parameter("target_coil", "")
         self.declare_parameter("dry_run", None)
         config_file = self.get_parameter("config_file").get_parameter_value().string_value
         if not config_file:
@@ -127,13 +129,25 @@ class WptAlignmentNode(Node):
         override_dry = self.get_parameter("dry_run").value
         if override_dry is not None:
             self.config["safety"]["dry_run"] = bool(override_dry)
+        override_station = self.get_parameter("target_station").get_parameter_value().string_value
+        if override_station:
+            self.config["target_station"] = override_station
+            self.config["layout_mode"] = "station_map"
+        override_coil = self.get_parameter("target_coil").get_parameter_value().string_value
+        if override_coil:
+            self.config["target_coil"] = override_coil
+            self.config["layout_mode"] = "four_coil_map"
         self.target_shelf = int(self.get_parameter("target_shelf").value)
-        self.state = AlignmentState.ENTER_SHELF
+        self.layout_mode = str(self.config.get("layout_mode", "four_coil_map"))
+        self.target_station = str(self.config.get("target_station", "A02")).upper()
+        self.target_coil = str(self.config.get("target_coil", "coil_1")).lower()
+        self.state = AlignmentState.ALIGN_COIL if self._starts_at_alignment() else AlignmentState.SEARCH_HEAD_TAG
         self.stable_count = 0
         self.last_seen_time = time.monotonic()
         self.active_coil_camera = None
         self.detector = AprilTagDetector(self.config["apriltag"].get("family", "tag36h11"))
         self.get_logger().info(f"AprilTag backend: {self.detector.backend}")
+        self.get_logger().info(f"layout_mode={self.layout_mode} target={self._target_name_for_log()}")
         self.cameras = self._open_cameras()
         self.cmd_pub = self.create_publisher(Twist, self.config["ros"].get("cmd_vel_topic", "/cmd_vel"), 10)
         self.timer = self.create_timer(1.0 / float(self.config["control"].get("loop_hz", 10.0)), self.step)
@@ -141,11 +155,16 @@ class WptAlignmentNode(Node):
     def _open_cameras(self) -> dict[str, cv2.VideoCapture]:
         cameras = {}
         for name, cfg in self.config["cameras"].items():
-            cap = cv2.VideoCapture(cfg["device"])
+            cap = cv2.VideoCapture(cfg["device"], cv2.CAP_V4L2)
+            if cfg.get("fourcc"):
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*str(cfg["fourcc"])[:4]))
             if cfg.get("width"):
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(cfg["width"]))
             if cfg.get("height"):
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(cfg["height"]))
+            if cfg.get("fps"):
+                cap.set(cv2.CAP_PROP_FPS, float(cfg["fps"]))
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             if not cap.isOpened():
                 self.get_logger().warning(f"Camera {name} device {cfg['device']} is not open")
             cameras[name] = cap
@@ -163,44 +182,71 @@ class WptAlignmentNode(Node):
 
     def read_all_tags(self) -> list[TagObservation]:
         observations: list[TagObservation] = []
+        grabbed = {cam_name: cap.grab() for cam_name, cap in self.cameras.items()}
         for cam_name, cap in self.cameras.items():
-            ok, frame = cap.read()
+            if not grabbed.get(cam_name, False):
+                self.get_logger().warning(f"Camera {cam_name} grab failed")
+                continue
+            ok, frame = cap.retrieve()
             if not ok:
+                self.get_logger().warning(f"Camera {cam_name} retrieve failed")
                 continue
             for det in self.detector.detect(frame):
                 observations.append(TagObservation(det.tag_id, det.center[0], det.center[1], det.angle_deg, det.area_px, cam_name))
         if observations:
             self.last_seen_time = time.monotonic()
+            self._log_detected_tags(observations)
         return observations
 
     def update_state_and_compute_cmd(self, obs: list[TagObservation]) -> VelocityCommand:
         if self._tag_lost_too_long():
             self.get_logger().warning("AprilTag lost timeout; stopping")
             return VelocityCommand()
+        if self.state == AlignmentState.SEARCH_HEAD_TAG:
+            head_obs = self._find(obs, head_tag_id(self.target_shelf), camera="front")
+            if head_obs:
+                self.state = AlignmentState.APPROACH_SHELF
+                self.get_logger().info("target head tag found")
+                return VelocityCommand()
+            return VelocityCommand(linear_x=float(self.config["speed"]["corridor_linear"]))
+        if self.state == AlignmentState.APPROACH_SHELF:
+            head_obs = self._find(obs, head_tag_id(self.target_shelf), camera="front")
+            if not head_obs:
+                return VelocityCommand()
+            err = compute_alignment_error(head_obs, self._target_for("front", "head"))
+            if is_aligned(err, **self._thresholds("head")):
+                self.state = AlignmentState.ENTER_SHELF
+                return VelocityCommand()
+            return compute_alignment_cmd(err, **self._control_params("head"))
         if self.state == AlignmentState.ENTER_SHELF:
             pair_name = self._final_pair_name()
             pair = self._find_target_pair(obs, pair_name)
             if pair:
+                self._log_pair_alignment(pair_name, pair, None)
                 self.active_coil_camera = pair.camera_name
                 self.state = AlignmentState.ALIGN_COIL
                 return VelocityCommand()
             if self._has_any_pair_marker(obs, pair_name):
+                self._log_pair_missing(pair_name, obs, self.active_coil_camera)
                 return VelocityCommand()
-            return VelocityCommand(linear_x=float(self.config["speed"]["corridor_linear"]))
+            return VelocityCommand(linear_x=float(self.config["speed"]["shelf_entry_linear"]))
         if self.state == AlignmentState.ALIGN_COIL:
             pair_name = self._final_pair_name()
             pair = self._find_target_pair(obs, pair_name, self.active_coil_camera)
             if not pair:
                 self.stable_count = 0
+                self._log_pair_missing(pair_name, obs, self.active_coil_camera)
                 return VelocityCommand()
             err = compute_pair_alignment_error(pair, self._target_for(pair.camera_name, pair_name))
             if is_aligned(err, **self._thresholds("coil")):
                 self.stable_count += 1
                 if self.stable_count >= int(self.config["alignment"]["stable_frames_required"]):
+                    self._log_pair_alignment(pair_name, pair, err)
                     self.state = AlignmentState.FINAL_STOP
                     return VelocityCommand()
             else:
                 self.stable_count = 0
+            self._log_pair_alignment(pair_name, pair, err)
             return compute_alignment_cmd(err, **self._control_params("coil"))
         if self.state == AlignmentState.FINAL_STOP:
             self.state = AlignmentState.CHARGING
@@ -221,9 +267,16 @@ class WptAlignmentNode(Node):
         candidates = [o for o in obs if o.tag_id == tag_id and (camera is None or o.camera_name == camera)]
         return max(candidates, key=lambda o: o.area_px, default=None)
 
-    def _find_target_pair(
-        self, obs: list[TagObservation], pair_name: str, preferred_camera: str | None = None
-    ) -> TagPairObservation | None:
+    def _find_any_target_coil_tag(self, obs: list[TagObservation], preferred_camera: str | None = None) -> TagObservation | None:
+        target_ids = set(self._pair_ids("north_south") + self._pair_ids("west_east"))
+        candidates = [o for o in obs if o.tag_id in target_ids]
+        if preferred_camera:
+            preferred = [o for o in candidates if o.camera_name == preferred_camera]
+            if preferred:
+                candidates = preferred
+        return max(candidates, key=lambda o: o.area_px, default=None)
+
+    def _find_target_pair(self, obs: list[TagObservation], pair_name: str, preferred_camera: str | None = None):
         first_id, second_id = self._pair_ids(pair_name)
         camera_names = sorted({o.camera_name for o in obs if o.camera_name})
         if preferred_camera:
@@ -245,16 +298,79 @@ class WptAlignmentNode(Node):
         first_id, second_id = self._pair_ids(pair_name)
         return any(o.tag_id in {first_id, second_id} for o in obs)
 
+    def _target_for(self, camera: str, tag_key: str) -> TargetPoseInImage:
+        if self._is_four_coil_map():
+            coils = self.config["coils"]
+            target_cfg = coils.get(self.target_coil, coils.get("default", coils["coil_1"]))
+        elif self._is_station_map():
+            stations = self.config["stations"]
+            target_cfg = stations.get(self.target_station, stations.get("default", stations["A02"]))
+        else:
+            target_cfg = self.config["shelves"][str(self.target_shelf)]
+        raw = target_cfg["targets"][camera].get(tag_key, target_cfg["targets"][camera]["default"])
+        return TargetPoseInImage(float(raw["x"]), float(raw["y"]), float(raw["angle_deg"]))
+
     def _final_pair_name(self) -> str:
         return str(self.config["alignment"].get("final_pair", "west_east"))
 
+    def _is_station_map(self) -> bool:
+        return self.layout_mode == "station_map"
+
+    def _is_four_coil_map(self) -> bool:
+        return self.layout_mode == "four_coil_map"
+
+    def _starts_at_alignment(self) -> bool:
+        return self._is_station_map() or self._is_four_coil_map()
+
+    def _target_name_for_log(self) -> str:
+        if self._is_four_coil_map():
+            return self.target_coil
+        if self._is_station_map():
+            return self.target_station
+        return f"shelf_{self.target_shelf}"
+
     def _pair_ids(self, pair_name: str) -> tuple[int, int]:
+        if self._is_four_coil_map():
+            return four_coil_pair_ids(self.target_coil, pair_name)
+        if self._is_station_map():
+            return station_pair_ids(self.target_station, pair_name)
         return coil_pair_ids(self.target_shelf, pair_name)
 
-    def _target_for(self, camera: str, tag_key: str) -> TargetPoseInImage:
-        shelf_cfg = self.config["shelves"][str(self.target_shelf)]
-        raw = shelf_cfg["targets"][camera].get(tag_key, shelf_cfg["targets"][camera]["default"])
-        return TargetPoseInImage(float(raw["x"]), float(raw["y"]), float(raw["angle_deg"]))
+    def _log_detected_tags(self, obs: list[TagObservation]) -> None:
+        tags = ", ".join(
+            f"id={o.tag_id} cam={o.camera_name} center=({o.center_x:.1f},{o.center_y:.1f}) angle={o.angle_deg:.1f}"
+            for o in obs
+        )
+        self.get_logger().info(
+            f"calib layout_mode={self.layout_mode} target={self._target_name_for_log()} "
+            f"state={self.state.value} detected_tags=[{tags}]"
+        )
+
+    def _log_pair_missing(self, pair_name: str, obs: list[TagObservation], camera: str | None = None) -> None:
+        first_id, second_id = self._pair_ids(pair_name)
+        visible = [o for o in obs if o.tag_id in {first_id, second_id} and (camera is None or o.camera_name == camera)]
+        visible_text = ", ".join(
+            f"id={o.tag_id} cam={o.camera_name} center=({o.center_x:.1f},{o.center_y:.1f})" for o in visible
+        )
+        self.get_logger().info(
+            f"calib layout_mode={self.layout_mode} target={self._target_name_for_log()} state={self.state.value} "
+            f"selected_pair={pair_name} required_ids=({first_id},{second_id}) "
+            f"pair_missing visible_marker_ids=[{visible_text}] stable_count={self.stable_count}"
+        )
+
+    def _log_pair_alignment(self, pair_name: str, pair: TagPairObservation, err) -> None:
+        first_id, second_id = self._pair_ids(pair_name)
+        err_text = "x_error=NA y_error=NA angle_error=NA"
+        if err is not None:
+            err_text = f"x_error={err.x:.2f} y_error={err.y:.2f} angle_error={err.angle_deg:.2f}"
+        self.get_logger().info(
+            f"calib layout_mode={self.layout_mode} target={self._target_name_for_log()} state={self.state.value} "
+            f"selected_pair={pair_name} required_ids=({first_id},{second_id}) camera={pair.camera_name} "
+            f"marker_a=id={pair.first.tag_id} center=({pair.first.center_x:.1f},{pair.first.center_y:.1f}) "
+            f"marker_b=id={pair.second.tag_id} center=({pair.second.center_x:.1f},{pair.second.center_y:.1f}) "
+            f"pair_mid_x={pair.midpoint_x:.2f} pair_mid_y={pair.midpoint_y:.2f} "
+            f"pair_angle_deg={pair.pair_angle_deg:.2f} {err_text} stable_count={self.stable_count}"
+        )
 
     def _thresholds(self, kind: str) -> dict[str, float]:
         cfg = self.config["alignment"][kind]
@@ -280,7 +396,7 @@ class WptAlignmentNode(Node):
 
     def _tag_lost_too_long(self) -> bool:
         timeout = float(self.config["safety"].get("tag_lost_timeout_sec", 2.0))
-        return (time.monotonic() - self.last_seen_time) > timeout and self.state not in {AlignmentState.ENTER_SHELF, AlignmentState.CHARGING}
+        return (time.monotonic() - self.last_seen_time) > timeout and self.state not in {AlignmentState.SEARCH_HEAD_TAG, AlignmentState.CHARGING}
 
 
 def _load_yaml(path: str) -> dict[str, Any]:

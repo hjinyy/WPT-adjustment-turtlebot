@@ -1,6 +1,12 @@
 ros:
   cmd_vel_topic: /cmd_vel
 
+# four_coil_map: default. Uses the 16 markers around the 4 physical coils
+# (11-14/21-24/31-34/41-44) that are already printed for the no-ROS 3x3-grid
+# workflow (see README) -- no re-printing needed to use this layout mode.
+layout_mode: four_coil_map
+target_coil: coil_1
+
 apriltag:
   family: tag36h11
 
@@ -8,13 +14,21 @@ safety:
   dry_run: true
   tag_lost_timeout_sec: 1.0
 
+# Device numbers match the physical wiring documented in README ("카메라 포트 확인"):
+# front=/dev/video0, right=/dev/video2, left=/dev/video4.
+# 320x240 MJPG @10fps keeps CPU/USB load low on the Pi during three-camera capture.
 cameras:
-  front: {device: 0, width: 640, height: 480}
-  right_bottom: {device: 2, width: 640, height: 480}
-  left_bottom: {device: 4, width: 640, height: 480}
+  front: {device: 0, width: 320, height: 240, fps: 10, fourcc: MJPG}
+  right_bottom: {device: 2, width: 320, height: 240, fps: 10, fourcc: MJPG}
+  left_bottom: {device: 4, width: 320, height: 240, fps: 10, fourcc: MJPG}
 
 speed:
   corridor_linear: 0.06
+  shelf_entry_linear: 0.025
+  head_max_linear: 0.05
+  head_max_angular: 0.18
+  head_min_linear: 0.01
+  head_min_angular: 0.02
   coil_max_linear: 0.015
   coil_max_angular: 0.08
   coil_min_linear: 0.004
@@ -23,10 +37,81 @@ speed:
 alignment:
   stable_frames_required: 10
   final_pair: west_east
-  coil: {threshold_x_px: 7, threshold_y_px: 7, threshold_angle_deg: 2.0}
+  rotation_verify_pair: north_south
+  head: {threshold_x_px: 12, threshold_y_px: 12, threshold_angle_deg: 8}
+  coil: {threshold_x_px: 4, threshold_y_px: 4, threshold_angle_deg: 2.0}
+
+# Pixel targets below are tuned for the 320x240 capture size above. Re-calibrate
+# per docs/calibration.md if the resolution changes.
+coils:
+  coil_1:
+    label: shelf_1_1
+    markers: {north: 11, south: 12, west: 13, east: 14}
+    targets:
+      front:
+        default: {x: 160, y: 120, angle_deg: 0}
+      left_bottom:
+        west_east: {x: 160, y: 110, angle_deg: 0}
+        north_south: {x: 160, y: 110, angle_deg: 90}
+        default: {x: 160, y: 110, angle_deg: 0}
+      right_bottom:
+        west_east: {x: 160, y: 115, angle_deg: 180}
+        north_south: {x: 160, y: 115, angle_deg: -90}
+        default: {x: 160, y: 115, angle_deg: 180}
+  coil_2:
+    label: shelf_1_2
+    markers: {north: 21, south: 22, west: 23, east: 24}
+    targets:
+      front:
+        default: {x: 160, y: 120, angle_deg: 0}
+      left_bottom:
+        west_east: {x: 160, y: 110, angle_deg: 0}
+        north_south: {x: 160, y: 110, angle_deg: 90}
+        default: {x: 160, y: 110, angle_deg: 0}
+      right_bottom:
+        west_east: {x: 160, y: 115, angle_deg: 180}
+        north_south: {x: 160, y: 115, angle_deg: -90}
+        default: {x: 160, y: 115, angle_deg: 180}
+  coil_3:
+    label: shelf_2_1
+    markers: {north: 31, south: 32, west: 33, east: 34}
+    targets:
+      front:
+        default: {x: 160, y: 120, angle_deg: 0}
+      left_bottom:
+        west_east: {x: 160, y: 110, angle_deg: 0}
+        north_south: {x: 160, y: 110, angle_deg: 90}
+        default: {x: 160, y: 110, angle_deg: 0}
+      right_bottom:
+        west_east: {x: 160, y: 115, angle_deg: 180}
+        north_south: {x: 160, y: 115, angle_deg: -90}
+        default: {x: 160, y: 115, angle_deg: 180}
+  coil_4:
+    label: shelf_2_2
+    markers: {north: 41, south: 42, west: 43, east: 44}
+    targets:
+      front:
+        default: {x: 160, y: 120, angle_deg: 0}
+      left_bottom:
+        west_east: {x: 160, y: 110, angle_deg: 0}
+        north_south: {x: 160, y: 110, angle_deg: 90}
+        default: {x: 160, y: 110, angle_deg: 0}
+      right_bottom:
+        west_east: {x: 160, y: 115, angle_deg: 180}
+        north_south: {x: 160, y: 115, angle_deg: -90}
+        default: {x: 160, y: 115, angle_deg: 180}
 
 control:
   loop_hz: 10.0
+  head:
+    k_y_to_linear: -0.0006
+    k_x_to_angular: -0.0020
+    k_angle_to_angular: -0.0040
+    x_deadband_px: 10
+    y_deadband_px: 10
+    angle_deadband_deg: 3
+    invert_linear: false
+    invert_angular: false
   coil:
     k_y_to_linear: -0.00025
     k_x_to_angular: -0.0009
@@ -36,15 +121,3 @@ control:
     angle_deadband_deg: 0.8
     invert_linear: false
     invert_angular: false
-
-shelves:
-  "1":
-    targets:
-      left_bottom:
-        west_east: {x: 320, y: 220, angle_deg: 0}
-        north_south: {x: 320, y: 220, angle_deg: 90}
-        default: {x: 320, y: 220, angle_deg: 0}
-      right_bottom:
-        west_east: {x: 320, y: 230, angle_deg: 180}
-        north_south: {x: 320, y: 230, angle_deg: -90}
-        default: {x: 320, y: 230, angle_deg: 180}

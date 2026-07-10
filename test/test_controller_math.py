@@ -10,15 +10,60 @@ from wpt_adjustment_turtlebot.controller_math import (
     grid_cell,
     is_aligned,
 )
-from wpt_adjustment_turtlebot.tag_layout import coil_pair_ids, coil_tag_id, decode_coil_tag
+from wpt_adjustment_turtlebot.tag_layout import (
+    coil_pair_ids,
+    coil_tag_id,
+    decode_coil_tag,
+    decode_four_coil_tag,
+    decode_station_tag,
+    four_coil_pair_ids,
+    four_coil_tag_id,
+    head_tag_id,
+    station_pair_ids,
+    station_tag_id,
+)
 
 
 def test_tag_id_rules():
-    assert coil_tag_id(1, "west") == 13
-    assert coil_tag_id(1, "east") == 14
-    assert coil_pair_ids(1, "west_east") == (13, 14)
-    assert coil_tag_id(4, "east") == 44
-    assert decode_coil_tag(44) == (4, "east")
+    # Legacy shelf/head-tag scheme (backwards-compatible only, not used by the
+    # default four_coil_map layout). See tag_layout.py docstring.
+    assert head_tag_id(1) == 101
+    assert head_tag_id(6) == 106
+    assert coil_tag_id(1, "west") == 113
+    assert coil_tag_id(1, "east") == 114
+    assert coil_pair_ids(1, "west_east") == (113, 114)
+    assert coil_tag_id(6, "east") == 164
+    assert decode_coil_tag(164) == (6, "east")
+    assert decode_coil_tag(64) is None
+
+
+def test_station_map_id_rules():
+    assert station_tag_id("A02", "north") == 5
+    assert station_tag_id("A02", "east") == 6
+    assert station_tag_id("A02", "south") == 7
+    assert station_tag_id("A02", "west") == 8
+    assert station_pair_ids("A02", "west_east") == (8, 6)
+    assert station_pair_ids("A02", "north_south") == (5, 7)
+    assert station_pair_ids("B02", "west_east") == (12, 10)
+    assert station_pair_ids("C04", "north_south") == (33, 35)
+    assert decode_station_tag(6) == ("A02", "east")
+    assert decode_station_tag(113) is None
+
+
+def test_four_coil_map_id_rules():
+    # Default layout_mode. IDs (11-44) match the already-printed physical
+    # tags used by the no-ROS 3x3-grid workflow -- no re-printing needed.
+    assert four_coil_tag_id("coil_1", "north") == 11
+    assert four_coil_tag_id("coil_1", "south") == 12
+    assert four_coil_tag_id("coil_1", "west") == 13
+    assert four_coil_tag_id("coil_1", "east") == 14
+    assert four_coil_pair_ids("coil_1", "west_east") == (13, 14)
+    assert four_coil_pair_ids("coil_1", "north_south") == (11, 12)
+    assert four_coil_pair_ids("coil_2", "west_east") == (23, 24)
+    assert four_coil_pair_ids("coil_3", "north_south") == (31, 32)
+    assert four_coil_pair_ids("coil_4", "west_east") == (43, 44)
+    assert decode_four_coil_tag(44) == ("coil_4", "east")
+    assert decode_four_coil_tag(5) is None
 
 
 def test_pair_alignment_error_uses_midpoint_and_pair_angle():
