@@ -177,6 +177,25 @@ python3 scripts/drive_to_shelf.py --shelf 3 --from-shelf 1
 
 7. 확정된 목표 칸과 실측한 스테이지/코일 간격을 각각 `camera_grid_alignment.py` 기본값과 `shelf_layout.py` 상수에 반영합니다.
 
+## 코일 간 라인 추종 이동 (`drive_between_coils.py`)
+
+코일 사이에 검정 테이프를 깔아둔 경로를 라인트레이서 방식으로 주행합니다. 4개 코일은 **전역 동서남북 하나**로 정렬되어 있고(1|2 위, 3|4 아래 — `docs/algorithm.md` 참고), 예를 들어 coil_1 → coil_3(south 방향)이면:
+
+- 양쪽 하부 카메라가 테이프를 인식하고 칼만 필터로 각도 틀어짐을 계속 보정하면서 직진
+- 전방 카메라가 **coil_3의 south 마커(32)** 를 보는 순간 즉시 정지 (출발 코일의 head 마커 12와는 ID가 달라 혼동 없음)
+
+```bash
+# 카메라/조향 부호 확인 (ROS2·모터 불필요)
+python3 scripts/drive_between_coils.py --from-coil coil_1 --to-coil coil_3 --dry-run
+
+# 실제 주행 (브링업 필요)
+source /opt/ros/humble/setup.bash
+ros2 launch turtlebot3_bringup robot.launch.py &
+python3 scripts/drive_between_coils.py --from-coil coil_1 --to-coil coil_3
+```
+
+조향 게인/라인 검출 문턱값은 `config/wpt_alignment.yaml`의 `line_follow` 섹션에서 조정합니다. 조향 부호(`invert_angular`)는 카메라 장착 방향에 따라 다르니 반드시 dry-run으로 먼저 확인하세요. 도착 후 정밀 정합은 기존 pair 로직으로 이어갑니다.
+
 ## 터미널 단독 카메라 정합 판정 (`check_camera_alignment.py`)
 
 `camera_grid_alignment.py`보다 더 엄격한 판정(크로스카메라 pair 확인, 전방 카메라 특정 셀 요구, CSV 로깅, 판정 이미지 저장)이 필요할 때 씁니다. **ROS2도, 로봇 브링업도 필요 없습니다** — 카메라 3대만 잡히면 실행됩니다.
