@@ -204,9 +204,15 @@ def main() -> None:
                 print(f"failed to fetch next command: {exc}")
 
             if command and command.get("command") == "navigate_to":
-                target_node_id = command.get("target_node_id")
-                target_shelf = NODE_TO_SHELF.get(target_node_id)
+                # MACS server sends camelCase targetNodeId/id; keep snake_case
+                # fallbacks so a simpler test/mock server still works.
+                target_node_id = command.get("targetNodeId") or command.get("target_node_id")
                 command_id = command.get("id") or command.get("command_id")
+                payload = command.get("payload") or {}
+                path = payload.get("path")
+                if path:
+                    print(f"navigate_to {target_node_id} via path {path} (mode={payload.get('mode')})")
+                target_shelf = NODE_TO_SHELF.get(target_node_id)
                 if target_shelf is None:
                     print(f"unknown target_node_id '{target_node_id}', not in {list(NODE_TO_SHELF)}; failing command")
                     if command_id:

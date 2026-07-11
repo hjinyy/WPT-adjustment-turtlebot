@@ -30,16 +30,30 @@ def test_post_event_sends_expected_body(mock_urlopen):
 
 
 @patch("wpt_adjustment_turtlebot.server_client.urllib.request.urlopen")
-def test_next_command_uses_robot_id_in_path(mock_urlopen):
-    mock_urlopen.return_value = _mock_response({"command": "navigate_to", "target_node_id": "B02"})
+def test_next_command_unwraps_server_envelope(mock_urlopen):
+    # The MACS server wraps the command: {"command": {...camelCase...}}.
+    mock_urlopen.return_value = _mock_response(
+        {"command": {"id": "cmd-1", "command": "navigate_to", "targetNodeId": "B03", "payload": {"path": ["A01", "B03"]}}}
+    )
     client = ServerClient(robot_id="TB3-01")
 
     result = client.next_command()
 
-    assert result["target_node_id"] == "B02"
+    assert result["command"] == "navigate_to"
+    assert result["targetNodeId"] == "B03"
+    assert result["id"] == "cmd-1"
+    assert result["payload"]["path"] == ["A01", "B03"]
     request = mock_urlopen.call_args[0][0]
     assert request.full_url == "http://tserver.local:8000/api/robots/TB3-01/commands/next"
     assert request.method == "GET"
+
+
+@patch("wpt_adjustment_turtlebot.server_client.urllib.request.urlopen")
+def test_next_command_empty_queue_returns_none(mock_urlopen):
+    mock_urlopen.return_value = _mock_response({"command": None})
+    client = ServerClient(robot_id="TB3-01")
+
+    assert client.next_command() is None
 
 
 @patch("wpt_adjustment_turtlebot.server_client.urllib.request.urlopen")
