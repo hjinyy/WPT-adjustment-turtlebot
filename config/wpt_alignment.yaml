@@ -34,6 +34,24 @@ speed:
   coil_min_linear: 0.004
   coil_min_angular: 0.015
 
+# Coil-to-coil transit over the black tape (scripts/drive_between_coils.py).
+# Side cameras track the tape; a Kalman filter smooths the lateral/heading
+# error; the front camera stops the robot the moment the target coil's
+# travel-direction marker appears. Steering gain signs depend on camera
+# mounting -- verify with --dry-run first.
+line_follow:
+  loop_hz: 10.0
+  cruise_linear: 0.05
+  k_x_to_angular: -0.003
+  k_angle_to_angular: -0.010
+  max_angular: 0.3
+  x_deadband_px: 3
+  angle_deadband_deg: 1.0
+  invert_angular: false
+  line_lost_timeout_sec: 1.0
+  detector: {threshold: 80, min_area_px: 120, roi_top_ratio: 0.0, roi_bottom_ratio: 1.0}
+  kalman: {process_variance: 1.0, measurement_variance: 4.0}
+
 alignment:
   stable_frames_required: 10
   final_pair: west_east

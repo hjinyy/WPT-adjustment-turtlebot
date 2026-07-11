@@ -14,6 +14,33 @@
 
 `four_coil_map`이 기본값이며, 현재 실제로 인쇄해서 쓰고 있는 태그(11~44)와 그대로 호환됩니다.
 
+### 전역 나침반 정렬 (global compass)
+
+과거에는 각 WPT가 "선반을 바라보는 쪽 = north"로 코일마다 방향이 달랐지만, 이제 **4개 코일 전부 하나의 동서남북**으로 정렬합니다.
+
+```text
+        north
+    coil_1 | coil_2
+    -------+-------      west <-> east
+    coil_3 | coil_4
+        south
+```
+
+즉 coil_1의 south 마커(12)와 coil_3의 south 마커(32)는 물리적으로 같은 방향을 봅니다. 태그를 붙일 때 이 기준으로 정렬하세요 (ID 자체는 그대로라 재인쇄는 불필요).
+
+## 0.5 코일 간 이동 (transit): 라인 추종 + 마커 정지
+
+코일 사이 경로에는 검정 테이프가 붙어 있고, `scripts/drive_between_coils.py`가 이 구간을 담당합니다 (`wpt_adjustment_turtlebot/coil_transit.py`가 순수 로직).
+
+예: coil_1 → coil_3 (이동 방향 = south)
+
+1. **head 마커**: 출발 코일에서 이동 방향에 해당하는 마커 — coil_1의 south(12). 로봇은 이 마커를 지나쳐 나가며 이동을 시작합니다.
+2. **라인 추종 + 칼만 보정**: 주행 중 각도가 조금씩 틀어지므로, 양쪽 하부 카메라(left_bottom/right_bottom)가 테이프/측면 마킹을 인식(`line_detection.LineDetector`)하고, 두 관측을 신뢰도 가중으로 합친 뒤 칼만 필터(`sensor_fusion.ErrorKalmanFilter`)로 평활화해서 `angular.z`를 연속 보정합니다. 한쪽 카메라가 잠깐 라인을 놓쳐도 필터의 predict로 이어가고, `line_lost_timeout_sec` 이상 양쪽 다 놓치면 안전 정지합니다.
+3. **정지 조건**: 전방 카메라가 **목표 코일의 이동 방향 마커**(coil_3의 south = 32)를 보는 순간 즉시 정지. 전방 카메라에 반대편 마커가 보인다는 것은 수신 코일이 송신 코일 위에 도달했다는 뜻입니다. 마커 ID가 코일마다 다르므로 출발 코일의 head 마커(12)와 혼동하지 않습니다.
+4. 정지 후 정밀 정합은 기존 pair 로직(`wpt_alignment_node` / `check_camera_alignment.py`)으로 이어갑니다.
+
+대각선 이동(coil_1 → coil_4)은 세로 → 가로 두 구간으로 나뉘며, 구간 사이 90도 회전은 아직 자동화하지 않았습니다(회전 중 라인/마커 가림 리스크) — 회전 후 두 번째 구간을 다시 실행하세요.
+
 ## 1. 상태 머신
 
 ```text

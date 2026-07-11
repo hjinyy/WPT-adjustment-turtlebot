@@ -3,6 +3,17 @@
 Recommended physical layout:
 - four coil map uses 16 markers around four WPT coils.
 - marker IDs are grouped by coil: 11-14, 21-24, 31-34, 41-44.
+- ALL coils share ONE global compass (not "north faces the shelf" per coil):
+
+          north
+      coil_1 | coil_2
+      -------+-------     west <-> east
+      coil_3 | coil_4
+          south
+
+  so e.g. coil_1's south marker (12) and coil_3's south marker (32) point the
+  same physical direction. Coil-to-coil transit planning on this grid lives
+  in coil_transit.py.
 
 Backwards-compatible shelf rule:
 - head tag: 100 + shelf_number
