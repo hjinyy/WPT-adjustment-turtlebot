@@ -210,8 +210,15 @@ def main() -> None:
                 command_id = command.get("id") or command.get("command_id")
                 payload = command.get("payload") or {}
                 path = payload.get("path")
+                # Patrol-schedule commands carry how long to dwell (= charge)
+                # at the target. The SERVER owns the dwell timer -- it won't
+                # queue the next hop until dwell_sec elapses after we report
+                # arrival -- so the robot just reports and keeps polling.
+                dwell_sec = payload.get("dwell_sec")
+                is_patrol = bool(payload.get("patrol"))
                 if path:
-                    print(f"navigate_to {target_node_id} via path {path} (mode={payload.get('mode')})")
+                    extra = f", patrol dwell={dwell_sec}s" if is_patrol else ""
+                    print(f"navigate_to {target_node_id} via path {path} (mode={payload.get('mode')}{extra})")
                 target_shelf = NODE_TO_SHELF.get(target_node_id)
                 if target_shelf is None:
                     print(f"unknown target_node_id '{target_node_id}', not in {list(NODE_TO_SHELF)}; failing command")
@@ -223,6 +230,10 @@ def main() -> None:
                         current_shelf = target_shelf
                         state = wait_for_lock(node, target_cell, args.grid_size, ALIGN_TIMEOUT_S)
                         node.refresh_battery()
+                        dwell_message = None
+                        if dwell_sec is not None and state in {"Locked", "Aligned"}:
+                            dwell_message = f"Dwelling at {SHELF_TO_NODE[current_shelf]} for {float(dwell_sec):.0f}s (patrol)"
+                            print(dwell_message)
                         client.post_event(
                             node_id=SHELF_TO_NODE[current_shelf],
                             alignment_state=state,
@@ -230,6 +241,7 @@ def main() -> None:
                             battery_voltage=node.battery_voltage,
                             charging=node.charging,
                             mode="Auto",
+                            message=dwell_message,
                         )
                         if command_id:
                             client.ack_command(command_id, status="acked" if state != "None" else "failed")
