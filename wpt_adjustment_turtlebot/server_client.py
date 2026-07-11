@@ -65,8 +65,17 @@ class ServerClient:
         return self._request("POST", "/api/robot/events", body)
 
     def next_command(self) -> dict | None:
-        """Return the next queued command for this robot, or None if there isn't one."""
-        return self._request("GET", f"/api/robots/{self.robot_id}/commands/next")
+        """Return the next queued command for this robot, or None if there isn't one.
+
+        The MACS server wraps the command in an envelope:
+            {"command": {"id": ..., "command": "navigate_to", "targetNodeId": ...}}
+        or {"command": null} when the queue is empty. Unwrap it here so callers
+        get the inner command dict (camelCase fields) directly.
+        """
+        response = self._request("GET", f"/api/robots/{self.robot_id}/commands/next")
+        if not response:
+            return None
+        return response.get("command")
 
     def ack_command(self, command_id: str, status: str = "acked", message: str | None = None) -> Any:
         return self._request(
