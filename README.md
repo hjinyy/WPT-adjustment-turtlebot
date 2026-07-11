@@ -221,6 +221,9 @@ python3 scripts/check_camera_alignment.py \
 
 (A01/B01/A04/B04는 코일이 없는 "Shelf" 타입 노드라 지금은 다루지 않습니다.)
 
+<img width="1328" height="1106" alt="image" src="https://github.com/user-attachments/assets/7dbd8576-a2ae-4d37-a0e6-e6f5282c15ea" />
+
+
 **태그 번호는 일단 분리해서 관리합니다.** 서버는 워크스페이스별 4방향 태그에 자체 마커 번호를 이미 배정해뒀는데(예: A02 north=3), 우리가 이미 인쇄해서 쓰고 있는 로컬 번호(11~44, shelf*10+position)와 다릅니다. 지금은 로컬 번호로 계속 감지/정합 판단을 하고, 그 결과(node_id, alignment_state)만 서버에 보고합니다. 서버의 마커 번호와 맞추려면 태그를 다시 인쇄해야 하니 나중에 필요할 때 진행하세요.
 
 ### 실행
