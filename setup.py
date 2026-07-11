@@ -18,5 +18,5 @@ setup(
     description='AprilTag based WPT coil alignment controller for TurtleBot using ROS2 cmd_vel.',
     license='MIT',
     tests_require=['pytest'],
-    entry_points={'console_scripts': ['wpt_alignment_node = wpt_adjustment_turtlebot.wpt_alignment_node:main']},
+    entry_points={'console_scripts': ['wpt_alignment_node = wpt_adjustment_turtlebot.wpt_alignment_node:main', 'global_map_navigation = wpt_adjustment_turtlebot.global_map_navigation:main']},
 )

@@ -172,3 +172,45 @@ control:
     x_deadband_px: 4
     angle_deadband_deg: 1.0
     invert_angular: false
+
+map_localization:
+  enabled: true
+  camera: front
+  coordinate_unit: m
+  origin: stage_center
+  north_axis: positive_y
+  tag_size_m: 0.015
+  tag_radius_m: 0.0975
+  coil_centers:
+    coil_1: {x_m: -0.2265, y_m: 0.1270}
+    coil_2: {x_m: 0.2265, y_m: 0.1270}
+    coil_3: {x_m: -0.2265, y_m: -0.1270}
+    coil_4: {x_m: 0.2265, y_m: -0.1270}
+  tag_world_poses:
+    11: {x_m: -0.2265, y_m: 0.2245, yaw_deg: 0.0}
+    12: {x_m: -0.2265, y_m: 0.0295, yaw_deg: 0.0}
+    13: {x_m: -0.3240, y_m: 0.1270, yaw_deg: 0.0}
+    14: {x_m: -0.1290, y_m: 0.1270, yaw_deg: 0.0}
+    21: {x_m: 0.2265, y_m: 0.2245, yaw_deg: 0.0}
+    22: {x_m: 0.2265, y_m: 0.0295, yaw_deg: 0.0}
+    23: {x_m: 0.1290, y_m: 0.1270, yaw_deg: 0.0}
+    24: {x_m: 0.3240, y_m: 0.1270, yaw_deg: 0.0}
+    31: {x_m: -0.2265, y_m: -0.0295, yaw_deg: 0.0}
+    32: {x_m: -0.2265, y_m: -0.2245, yaw_deg: 0.0}
+    33: {x_m: -0.3240, y_m: -0.1270, yaw_deg: 0.0}
+    34: {x_m: -0.1290, y_m: -0.1270, yaw_deg: 0.0}
+    41: {x_m: 0.2265, y_m: -0.0295, yaw_deg: 0.0}
+    42: {x_m: 0.2265, y_m: -0.2245, yaw_deg: 0.0}
+    43: {x_m: 0.1290, y_m: -0.1270, yaw_deg: 0.0}
+    44: {x_m: 0.3240, y_m: -0.1270, yaw_deg: 0.0}
+  process_variance: 0.002
+  measurement_variance: 0.01
+  outlier_distance_m: 0.20
+  prediction_timeout_sec: 0.4
+  lost_timeout_sec: 2.0
+  scan_angular: 0.10
+  final_scan_angular: 0.05
+  route_linear: 0.03
+  route_max_angular: 0.18
+  heading_threshold_deg: 8.0
+  preapproach_radius_m: 0.06

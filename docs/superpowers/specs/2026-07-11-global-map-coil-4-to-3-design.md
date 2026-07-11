@@ -1,107 +1,63 @@
-# Global Map Coil 4 to Coil 3 Design
+# 전역 지도 기반 WPT 코일 이동 설계
 
-## Goal
+## 목표
 
-Move a TurtleBot from coil 4 to coil 3 using the fixed AprilTag map as the
-primary navigation reference. The robot must wait without moving until the
-operator starts the mission, rotate automatically when it begins facing away
-from the route, stop safely when localization is unavailable, and finish with
-the existing undershoot-first coil alignment.
+터틀봇이 중앙 원점의 전역 AprilTag 지도를 사용해 현재 위치와 방향을 추정하고,
+`coil_1`부터 `coil_4` 중 실행 시 지정한 목표로 회전·이동한 뒤 언더슈트 우선
+정합으로 정지한다. 사용자가 시작하기 전에는 이동하지 않으며 `Ctrl+C`는
+`/cmd_vel` 0을 발행하고 전체 주행 프로세스를 종료한다.
 
-## Canonical Marker Layout
+## 전역 좌표계
 
-The physical layout is the user-supplied diagram. Marker orientation in the
-map is therefore:
+- 원점: 네 코일 배치의 중앙
+- +x: 동쪽, +y: 북쪽
+- 단위: m
+- 코일 중심: `coil_1=(-0.2265,0.1270)`, `coil_2=(0.2265,0.1270)`,
+  `coil_3=(-0.2265,-0.1270)`, `coil_4=(0.2265,-0.1270)`
+- 태그 중심 반경: `0.0975 m`
+- 태그 한 변: `0.015 m`
+- 끝자리 방향: `1=북`, `2=남`, `3=서`, `4=동`
 
-| Coil | Top | Bottom | Left | Right |
-| --- | ---: | ---: | ---: | ---: |
-| coil_1 | 11 | 12 | 13 | 14 |
-| coil_2 | 21 | 22 | 23 | 24 |
-| coil_3 | 32 | 31 | 34 | 33 |
-| coil_4 | 42 | 41 | 44 | 43 |
+16개 태그의 좌표는 `config/wpt_alignment.yaml`의
+`map_localization.tag_world_poses`에 명시한다.
 
-`coil_3` and `coil_4` must be corrected from the current reversed mapping
-before map localization is enabled. The map coordinate system uses the
-existing shelf layout: coil 1 is `(0, 0)`, positive x points from coil 1 to
-coil 2, and positive y points from coil 1 to coil 3. Coil 4 to coil 3 is
-therefore a straight `-x` route.
+## 위치추정
 
-## Required Calibration Contract
+정면 top-down 카메라에서 검출한 AprilTag 네 모서리와 전역 태그 모서리를
+호모그래피로 연결한다. 영상 중앙을 전역 위치로, 영상 상단 방향을 전역 yaw로
+투영한다. 관측 자세는 평면 EKF의 측정값으로 사용하고 짧은 태그 손실 구간에서는
+직전 `/cmd_vel`로 예측한다. 설정된 시간 이상 위치를 잃으면 0 속도로 정지한다.
 
-Map navigation is only armed when these configurable values are valid:
+## 경로와 라인 보조
 
-- Camera intrinsics: focal lengths and principal point for the camera used for
-  map localization.
-- Physical AprilTag side length in metres.
-- Rigid transform from that camera to the TurtleBot base frame.
-- Metric world poses for every fixed marker, derived from the measured stage
-  layout and the canonical marker table above.
+현재 전역 자세에서 가장 가까운 출발 코일을 찾고 목표 코일까지 축 정렬 경로를
+생성한다. 대각선 코일 사이 이동에는 한 개의 회전 웨이포인트를 넣는다. 목표
+방위 오차가 크면 선속도 0으로 제자리 회전하고, 허용 각도 안에 들어오면 전진한다.
+검은 라인이 보일 때만 라인 중심·각도를 칼만 필터로 안정화해 제한된 각속도
+보정으로 더한다. 라인은 목적지와 전진 거리를 결정하지 않는다.
 
-The node must expose a dry-run diagnostic that prints the estimated map pose
-and rejects navigation if the contract is absent or inconsistent. Placeholder
-stage dimensions may remain for tests but must not silently arm real motion.
+목표 코일 접근 후에는 목표 코일의 서-동 마커 pair 중심과 각도로 미세 정합한다.
+후진 선속도를 차단하고 연속 안정 프레임이 언더슈트 허용 범위에 들어오면 완료한다.
 
-## Architecture
+## 실행과 종료
 
-### Map Localization
+`start_bringup.sh`는 TurtleBot3 bringup을 전면 실행한다. `start_alignment.sh
+coil_N`은 노드를 별도 프로세스 그룹으로 실행하고 Enter 후 start 서비스를
+호출한다. Ctrl+C cleanup은 재진입을 차단하고 제한시간 stop 서비스, `/cmd_vel` 0,
+프로세스 그룹 TERM/KILL 순서로 종료한다.
 
-AprilTag corners are passed through `solvePnP` with the configured camera
-model and tag side length. Each observation produces a candidate robot pose
-in the map frame by composing the fixed map-to-tag transform, the inverse
-camera-to-tag transform, and the inverse base-to-camera transform.
+## 진단 로그
 
-Candidates with excessive reprojection error or disagreement from the median
-pose are discarded. A planar EKF stores `[x, y, yaw]`, predicts from the most
-recent velocity command, and updates with the remaining observations. Yaw
-residuals are normalized to `[-pi, pi]`.
+실행마다 `logs/YYYYMMDD_HHMMSS_coil_N/`에 다음 파일을 만든다.
 
-### Route State Machine
+- `events.log`: 시작·정지·상태 전환·경로 생성·정합 완료
+- `telemetry.csv`: 태그 ID, 원본/필터 자세, 라인 오차·신뢰도, 웨이포인트,
+  발행 속도, `/odom` 실측 속도
 
-`IDLE` publishes zero velocity and waits for an explicit start request.
-`LOCALIZE` obtains a valid EKF update. If no map tag is visible, it performs a
-bounded, in-place scan; it never drives forward without a pose fix.
+명령과 odom을 비교해 제어 계산 문제와 실제 구동 문제를 구분한다.
 
-`ROTATE_TO_ROUTE` computes the heading from the current map pose toward a
-pre-approach waypoint for coil 3 and rotates in the shortest direction.
-`FOLLOW_ROUTE` sends only non-negative linear velocity, controls heading and
-cross-track error from map pose, and adds the front-camera line estimate only
-as a bounded angular correction. Missing line data does not stop the route.
+## 검증
 
-On reaching the coil 3 pre-approach waypoint, `ALIGN_COIL` reuses the existing
-pair-centre AprilTag visual servoing, Kalman filtering, and undershoot-first
-final stop. `COMPLETE` publishes zero velocity and reports success.
-
-### Localization Loss
-
-During a route, the EKF may predict briefly when tags disappear. After the
-configured loss timeout, linear velocity is set to zero. The node may perform
-only a bounded in-place scan to reacquire map tags; scan timeout transitions
-to `ERROR` with zero velocity. It must not use unbounded blind line following
-as a substitute for map localization.
-
-## Operator Interface
-
-`start_bringup.sh` remains a foreground ROS bringup command. `start_alignment.sh`
-starts the alignment node in `IDLE`, waits for Enter, and calls the node's
-start service for the fixed `coil_4 -> coil_3` mission. It traps `Ctrl+C` to
-publish a zero command and terminate the node.
-
-The node provides `start` and `stop` ROS Trigger services. `stop` immediately
-returns to `IDLE` and commands zero velocity. `COMPLETE`, `ERROR`, and process
-shutdown also command zero velocity.
-
-## Non-Goals
-
-- No SLAM or dynamic obstacle avoidance is added.
-- No time-based `drive_to_shelf.py` command participates in this mission.
-- The black tape line does not determine destination identity or replace the
-  marker-map pose.
-
-## Test Strategy
-
-- Unit-test marker-map orientation, map transform composition, yaw wrapping,
-  EKF outlier rejection, route heading, cross-track control, and loss timeout.
-- Unit-test state transitions for IDLE/start/stop, reverse-facing start,
-  marker loss, successful coil 3 acquisition, and final zero command.
-- Keep existing final-alignment and undershoot tests green.
-- Run the full pytest suite and a dry-run ROS diagnostic before real motion.
+전역 좌표, 호모그래피, EKF, 경로 회전/직진, 라인 보조, 언더슈트, 실행 스크립트,
+Ctrl+C 프로세스 정리를 pytest로 검증한다. 실제 이동 전 dry-run에서 카메라 인식,
+경로 생성, 시작/정지 서비스, 로그 생성을 확인한다.
