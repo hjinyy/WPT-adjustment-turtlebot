@@ -43,6 +43,26 @@ _STEP_TO_DIRECTION = {
     (1, 0): "east",
 }
 
+# Measured coil-center to coil-center travel distances on the physical stage
+# (2026-07 tape measurements). Vertical = coil_1<->coil_3 / coil_2<->coil_4,
+# horizontal = coil_1<->coil_2 / coil_3<->coil_4.
+LEG_DISTANCE_VERTICAL_M = 0.255
+LEG_DISTANCE_HORIZONTAL_M = 0.453
+
+# Side markers to require at the target coil, per travel direction: driving
+# north/south the target's west+east tags flank the robot; driving east/west
+# its north+south tags do.
+_DIRECTION_TO_SIDE_POSITIONS = {
+    "north": ("west", "east"),
+    "south": ("west", "east"),
+    "east": ("north", "south"),
+    "west": ("north", "south"),
+}
+
+
+def leg_distance_m(direction: str) -> float:
+    return LEG_DISTANCE_VERTICAL_M if direction in {"north", "south"} else LEG_DISTANCE_HORIZONTAL_M
+
 
 def normalize_coil_name(coil: str | int) -> str:
     if isinstance(coil, int):
@@ -70,7 +90,9 @@ class TransitLeg:
     to_coil: str
     direction: str
     head_marker_id: int  # departure coil's marker in the travel direction
-    stop_marker_id: int  # target coil's marker in the travel direction -> stop on sight
+    stop_marker_id: int  # target coil's marker in the travel direction (its "head" as we arrive)
+    side_marker_ids: tuple[int, int]  # target coil's flanking pair for this direction
+    distance_m: float  # measured coil-center to coil-center travel distance
 
 
 def make_leg(from_coil: str | int, to_coil: str | int) -> TransitLeg:
@@ -79,13 +101,34 @@ def make_leg(from_coil: str | int, to_coil: str | int) -> TransitLeg:
     direction = travel_direction(from_name, to_name)
     if direction is None:
         raise ValueError(f"{from_name} -> {to_name} is not a single straight segment")
+    side_a, side_b = _DIRECTION_TO_SIDE_POSITIONS[direction]
     return TransitLeg(
         from_coil=from_name,
         to_coil=to_name,
         direction=direction,
         head_marker_id=four_coil_tag_id(from_name, direction),
         stop_marker_id=four_coil_tag_id(to_name, direction),
+        side_marker_ids=(four_coil_tag_id(to_name, side_a), four_coil_tag_id(to_name, side_b)),
+        distance_m=leg_distance_m(direction),
     )
+
+
+def stop_condition_met(
+    now: float,
+    head_visible: bool,
+    side_last_seen: dict[int, float],
+    side_marker_ids: tuple[int, int],
+    freshness_sec: float,
+) -> bool:
+    """Arrival rule from the physical experiments: stop the INSTANT the target
+    coil's head (travel-direction) marker is recognized WHILE both flanking
+    side markers are (recently) visible. Requiring the sides keeps a glancing
+    early head detection from stopping the robot short of the coil center;
+    freshness_sec tolerates single dropped frames on the side cameras.
+    """
+    if not head_visible:
+        return False
+    return all(now - side_last_seen.get(marker_id, float("-inf")) <= freshness_sec for marker_id in side_marker_ids)
 
 
 def plan_transit_legs(from_coil: str | int, to_coil: str | int) -> list[TransitLeg]:

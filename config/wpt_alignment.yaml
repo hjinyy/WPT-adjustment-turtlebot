@@ -39,6 +39,17 @@ speed:
 # error; the front camera stops the robot the moment the target coil's
 # travel-direction marker appears. Steering gain signs depend on camera
 # mounting -- verify with --dry-run first.
+# Two-phase leg profile keyed to the measured coil-center distances
+# (vertical 25.5 cm, horizontal 45.3 cm -- see coil_transit.py). CRUISE covers
+# cruise_fraction of the distance at line_follow.cruise_linear, then APPROACH
+# slows to approach_linear until BOTH of the target's flanking side markers are
+# visible (within side_marker_freshness_sec) AND its travel-direction head
+# marker appears on the front camera -> immediate stop.
+transit:
+  cruise_fraction: 0.6
+  approach_linear: 0.02
+  side_marker_freshness_sec: 0.7
+
 line_follow:
   loop_hz: 10.0
   cruise_linear: 0.05

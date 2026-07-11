@@ -5,6 +5,7 @@ from wpt_adjustment_turtlebot.coil_transit import (
     make_leg,
     normalize_coil_name,
     plan_transit_legs,
+    stop_condition_met,
     travel_direction,
 )
 
@@ -34,6 +35,33 @@ def test_eastward_leg_markers():
     assert leg.direction == "east"
     assert leg.head_marker_id == 14  # coil_1 east
     assert leg.stop_marker_id == 24  # coil_2 east
+
+
+def test_leg_distances_match_stage_measurements():
+    # Measured coil-center distances: vertical 25.5 cm, horizontal 45.3 cm.
+    assert make_leg("coil_1", "coil_3").distance_m == pytest.approx(0.255)
+    assert make_leg("coil_2", "coil_4").distance_m == pytest.approx(0.255)
+    assert make_leg("coil_1", "coil_2").distance_m == pytest.approx(0.453)
+    assert make_leg("coil_3", "coil_4").distance_m == pytest.approx(0.453)
+
+
+def test_side_markers_flank_the_travel_direction():
+    south = make_leg("coil_1", "coil_3")
+    assert south.side_marker_ids == (33, 34)  # coil_3 west, east flank a north-south transit
+    east = make_leg("coil_1", "coil_2")
+    assert east.side_marker_ids == (21, 22)  # coil_2 north, south flank an east-west transit
+
+
+def test_stop_condition_needs_head_plus_both_fresh_side_markers():
+    sides = (33, 34)
+    # Head not visible -> never stop, even with perfect side visibility.
+    assert not stop_condition_met(10.0, False, {33: 10.0, 34: 10.0}, sides, 0.7)
+    # Head visible but one side marker never seen -> keep approaching.
+    assert not stop_condition_met(10.0, True, {33: 10.0}, sides, 0.7)
+    # Head visible but a side marker is stale (>freshness window) -> keep approaching.
+    assert not stop_condition_met(10.0, True, {33: 10.0, 34: 9.0}, sides, 0.7)
+    # Head visible + both sides fresh -> stop this instant.
+    assert stop_condition_met(10.0, True, {33: 10.0, 34: 9.5}, sides, 0.7)
 
 
 def test_plan_transit_legs_adjacent_and_same():

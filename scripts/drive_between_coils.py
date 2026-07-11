@@ -9,15 +9,19 @@ All four coils share one global compass (see coil_transit.py):
     coil_3 | coil_4
         south
 
-Per leg (e.g. coil_1 -> coil_3, direction=south):
-1. Drive forward along the black tape. Both side cameras (left_bottom /
-   right_bottom) detect the tape / side markings; their observations are
-   fused through a Kalman filter and steer angular.z so the robot stays
-   centered even as heading drift accumulates.
-2. The front camera watches for the TARGET coil's marker in the travel
-   direction (coil_3 south = id 32). The moment it appears, publish an
-   immediate stop -- seeing that far-side marker means the receive coil is
-   over the transmit coil. Fine pair alignment can then follow separately.
+Per leg (e.g. coil_1 -> coil_3, direction=south, measured distance 25.5 cm;
+horizontal legs are 45.3 cm):
+1. CRUISE: drive forward along the black tape for transit.cruise_fraction of
+   the measured coil-center distance. Both side cameras (left_bottom /
+   right_bottom) detect the tape; their observations are fused through a
+   Kalman filter and steer angular.z so heading drift is corrected
+   continuously instead of accumulating.
+2. APPROACH: slow to transit.approach_linear and stop THE INSTANT the target
+   coil's head marker in the travel direction (coil_3 south = id 32) is seen
+   by the front camera WHILE both of the target's flanking side markers
+   (coil_3 west/east = 33/34 for north-south travel) are visible -- the
+   combination that gave the best alignment odds in the physical
+   experiments. Fine pair alignment can then follow separately.
 
 Run on the robot (needs ROS2 for /cmd_vel unless --dry-run):
 
@@ -43,7 +47,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from wpt_adjustment_turtlebot.coil_transit import compute_line_follow_cmd, plan_transit_legs  # noqa: E402
+from wpt_adjustment_turtlebot.coil_transit import compute_line_follow_cmd, plan_transit_legs, stop_condition_met  # noqa: E402
 from wpt_adjustment_turtlebot.controller_math import VelocityCommand  # noqa: E402
 from wpt_adjustment_turtlebot.line_detection import LineDetector, LineObservation  # noqa: E402
 from wpt_adjustment_turtlebot.sensor_fusion import ErrorKalmanFilter  # noqa: E402
@@ -154,11 +158,29 @@ def drive_leg(
     config: dict,
     max_leg_sec: float,
 ) -> bool:
+    """One straight leg, in two phases keyed to the measured leg distance.
+
+    CRUISE   -- Kalman line following at cruise speed for transit.cruise_fraction
+                of the measured coil-center distance (dead-reckoned from the
+                commanded linear speed).
+    APPROACH -- slow down and hunt for the arrival condition: the target coil's
+                BOTH flanking side markers visible (any camera, with a small
+                freshness window) AND its head/travel-direction marker seen by
+                the front camera -> stop that instant. This combination gave
+                the highest alignment success in the physical experiments.
+
+    The arrival condition is checked in both phases (marker IDs are unique per
+    coil, so an early sighting can only be the real target).
+    """
     follow = config.get("line_follow", {})
+    transit = config.get("transit", {})
     loop_hz = float(follow.get("loop_hz", 10.0))
     line_lost_timeout = float(follow.get("line_lost_timeout_sec", 1.0))
+    cruise_fraction = float(transit.get("cruise_fraction", 0.6))
+    approach_linear = float(transit.get("approach_linear", 0.02))
+    side_freshness = float(transit.get("side_marker_freshness_sec", 0.7))
+    cruise_linear = float(follow.get("cruise_linear", 0.05))
     steer_params = {
-        "cruise_linear": float(follow.get("cruise_linear", 0.05)),
         "k_x_to_angular": float(follow.get("k_x_to_angular", -0.003)),
         "k_angle_to_angular": float(follow.get("k_angle_to_angular", -0.010)),
         "max_angular": float(follow.get("max_angular", 0.3)),
@@ -167,36 +189,55 @@ def drive_leg(
         "invert_angular": bool(follow.get("invert_angular", False)),
     }
 
+    cruise_distance = leg.distance_m * cruise_fraction
     print(
-        f"[leg] {leg.from_coil} -> {leg.to_coil} direction={leg.direction} "
-        f"head_marker={leg.head_marker_id} stop_marker={leg.stop_marker_id}"
+        f"[leg] {leg.from_coil} -> {leg.to_coil} direction={leg.direction} distance={leg.distance_m:.3f}m "
+        f"(cruise {cruise_distance:.3f}m then approach) departure_head={leg.head_marker_id} "
+        f"arrival_head={leg.stop_marker_id} side_markers={leg.side_marker_ids}"
     )
     started = time.monotonic()
+    last_tick = started
     last_line_seen = started
+    distance_driven = 0.0
+    side_last_seen: dict[int, float] = {}
 
     while True:
         now = time.monotonic()
         if now - started > max_leg_sec:
             publisher.stop()
-            print(f"[leg] TIMEOUT after {max_leg_sec:.0f}s without stop marker {leg.stop_marker_id}; stopped")
+            print(f"[leg] TIMEOUT after {max_leg_sec:.0f}s without arrival condition; stopped")
             return False
 
         frames = read_frames(cameras)
 
-        # 1) Stop marker check first: the moment the target coil's marker in
-        #    the travel direction is visible on the front camera, stop.
-        front = frames.get("front")
-        if front is not None:
-            detections = tag_detector.detect(front)
-            seen_ids = {det.tag_id for det in detections}
-            if leg.stop_marker_id in seen_ids:
-                publisher.stop()
-                print(f"[leg] stop marker {leg.stop_marker_id} visible -> STOP over {leg.to_coil}")
-                return True
-            if leg.head_marker_id in seen_ids:
-                print(f"[leg] passing departure head marker {leg.head_marker_id}")
+        # 1) Arrival check. Side markers may appear on any camera (physically
+        #    the side-bottom ones); the head marker must be on the front camera.
+        head_visible = False
+        for camera_name, frame in frames.items():
+            for det in tag_detector.detect(frame):
+                if det.tag_id in leg.side_marker_ids:
+                    side_last_seen[det.tag_id] = now
+                if det.tag_id == leg.stop_marker_id and camera_name == "front":
+                    head_visible = True
+                elif det.tag_id == leg.head_marker_id and camera_name == "front":
+                    print(f"[leg] passing departure head marker {leg.head_marker_id}")
+        if stop_condition_met(now, head_visible, side_last_seen, leg.side_marker_ids, side_freshness):
+            publisher.stop()
+            print(
+                f"[leg] arrival: head marker {leg.stop_marker_id} + side markers {leg.side_marker_ids} "
+                f"-> STOP over {leg.to_coil} (driven ~{distance_driven:.3f}m of {leg.distance_m:.3f}m)"
+            )
+            return True
+        if head_visible:
+            print(f"[leg] head marker {leg.stop_marker_id} visible but side markers not fresh; keep approaching")
 
-        # 2) Line following on the side cameras, Kalman-smoothed.
+        # 2) Phase by dead-reckoned distance: full speed for the known straight
+        #    stretch, then slow so the stop lands as close to center as possible.
+        phase = "cruise" if distance_driven < cruise_distance else "approach"
+        linear_speed = cruise_linear if phase == "cruise" else approach_linear
+
+        # 3) Line following on the side cameras, Kalman-smoothed, so heading
+        #    drift is corrected continuously instead of accumulating.
         left_obs = line_detector.detect(frames["left_bottom"]) if "left_bottom" in frames else None
         right_obs = line_detector.detect(frames["right_bottom"]) if "right_bottom" in frames else None
         fused = fuse_side_lines(left_obs, right_obs)
@@ -211,12 +252,16 @@ def drive_leg(
                 print(f"[leg] line lost for >{line_lost_timeout:.1f}s; stopped for safety")
                 return False
 
-        cmd = compute_line_follow_cmd(estimate.x_error, estimate.angle_error_deg, **steer_params)
+        cmd = compute_line_follow_cmd(estimate.x_error, estimate.angle_error_deg, cruise_linear=linear_speed, **steer_params)
         publisher.publish(cmd)
+        distance_driven += cmd.linear_x * (now - last_tick)
+        last_tick = now
         cameras_seen = ("L" if left_obs else "-") + ("R" if right_obs else "-")
+        sides_fresh = sum(1 for m in leg.side_marker_ids if now - side_last_seen.get(m, float("-inf")) <= side_freshness)
         print(
-            f"t={now - started:6.2f}s x_err={estimate.x_error:7.2f} angle_err={estimate.angle_error_deg:6.2f} "
-            f"line_cams={cameras_seen} cmd linear={cmd.linear_x:.3f} angular={cmd.angular_z:.3f}"
+            f"t={now - started:6.2f}s phase={phase} dist={distance_driven:.3f}m x_err={estimate.x_error:7.2f} "
+            f"angle_err={estimate.angle_error_deg:6.2f} line_cams={cameras_seen} sides_fresh={sides_fresh}/2 "
+            f"cmd linear={cmd.linear_x:.3f} angular={cmd.angular_z:.3f}"
         )
         time.sleep(1.0 / loop_hz)
 
