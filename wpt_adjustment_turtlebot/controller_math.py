@@ -155,3 +155,65 @@ def compute_alignment_cmd(
     if angular and abs(angular) < min_angular:
         angular = copysign(min_angular, angular)
     return VelocityCommand(linear_x=linear, angular_z=angular)
+
+
+def blend_marker_and_line_cmd(
+    marker_cmd: VelocityCommand | None,
+    line_cmd: VelocityCommand | None,
+    *,
+    line_weight: float,
+    max_linear: float,
+    max_angular: float,
+) -> VelocityCommand:
+    """Blend marker-centered alignment with auxiliary line following.
+
+    When marker_cmd exists, it owns linear.x so the robot keeps prioritizing the
+    marker-pair midpoint. The line can only add a bounded angular correction.
+    When marker_cmd is missing, line_cmd can drive conservative line following.
+    """
+    if marker_cmd is None and line_cmd is None:
+        return VelocityCommand()
+    if marker_cmd is None:
+        return VelocityCommand(
+            linear_x=clamp(line_cmd.linear_x, max_linear),
+            angular_z=clamp(line_cmd.angular_z, max_angular),
+        )
+    angular = marker_cmd.angular_z
+    if line_cmd is not None:
+        angular += float(line_weight) * line_cmd.angular_z
+    return VelocityCommand(
+        linear_x=clamp(marker_cmd.linear_x, max_linear),
+        angular_z=clamp(angular, max_angular),
+    )
+
+
+def is_undershoot_aligned(
+    err: AlignmentError,
+    *,
+    threshold_x_px: float,
+    undershoot_y_px: float,
+    overshoot_y_px: float,
+    threshold_angle_deg: float,
+    approach_y_sign: int,
+) -> bool:
+    """Return true only when the robot is close while still on the approach side.
+
+    approach_y_sign defines which sign of y_error means "not yet past the
+    target". For the current top-down setup, -1 means negative y_error is the
+    preferred undershoot side and positive y_error is overshoot.
+    """
+    sign = -1 if int(approach_y_sign) < 0 else 1
+    y_on_approach_axis = err.y * sign
+    return (
+        abs(err.x) <= abs(threshold_x_px)
+        and -abs(overshoot_y_px) <= y_on_approach_axis <= abs(undershoot_y_px)
+        and abs(err.angle_deg) <= abs(threshold_angle_deg)
+    )
+
+
+def block_reverse_linear_cmd(cmd: VelocityCommand, *, forward_linear_sign: int) -> VelocityCommand:
+    """Suppress reverse linear corrections to avoid front/back oscillation."""
+    sign = -1 if int(forward_linear_sign) < 0 else 1
+    if cmd.linear_x * sign < 0:
+        return VelocityCommand(linear_x=0.0, angular_z=cmd.angular_z)
+    return cmd

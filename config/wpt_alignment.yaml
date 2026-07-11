@@ -25,6 +25,9 @@ cameras:
 speed:
   corridor_linear: 0.06
   shelf_entry_linear: 0.025
+  line_search_linear: 0.025
+  line_max_angular: 0.10
+  line_min_angular: 0.01
   head_max_linear: 0.05
   head_max_angular: 0.18
   head_min_linear: 0.01
@@ -40,6 +43,21 @@ alignment:
   rotation_verify_pair: north_south
   head: {threshold_x_px: 12, threshold_y_px: 12, threshold_angle_deg: 8}
   coil: {threshold_x_px: 4, threshold_y_px: 4, threshold_angle_deg: 2.0}
+  # Prefer stopping just before the coil target instead of crossing it and then
+  # correcting backward. With k_y_to_linear=-0.00025, negative y_error commands
+  # positive forward motion, so approach_y_sign=-1 means the allowed final band
+  # is mostly on the near/undershoot side of the target.
+  undershoot_stop:
+    enabled: true
+    approach_y_sign: -1
+    forward_linear_sign: 1
+    threshold_x_px: 4
+    undershoot_y_px: 3.0
+    overshoot_y_px: 0.5
+    threshold_angle_deg: 2.0
+    block_reverse_linear: true
+    block_pair_loss_linear_backoff: true
+
   # SEARCH_COIL (coarse approach while the pair isn't visible) and the ALIGN_COIL
   # occlusion recovery back-off. See docs/algorithm.md "coil search / recovery".
   search:
@@ -109,6 +127,25 @@ coils:
         north_south: {x: 160, y: 115, angle_deg: -90}
         default: {x: 160, y: 115, angle_deg: 180}
 
+line_tracking:
+  enabled: true
+  camera: front
+  # Top-down view: top of the front image points in the desired travel direction.
+  threshold: 80
+  min_area_px: 120
+  min_confidence: 0.10
+  roi_top_ratio: 0.0
+  roi_bottom_ratio: 1.0
+  blur_kernel: 5
+  max_missed_frames: 5
+  align_line_weight: 0.25
+
+fusion:
+  marker_process_variance: 1.0
+  marker_measurement_variance: 4.0
+  line_process_variance: 1.0
+  line_measurement_variance: 8.0
+
 control:
   loop_hz: 10.0
   head:
@@ -128,4 +165,10 @@ control:
     y_deadband_px: 3
     angle_deadband_deg: 0.8
     invert_linear: false
+    invert_angular: false
+  line:
+    k_x_to_angular: -0.0012
+    k_angle_to_angular: -0.0030
+    x_deadband_px: 4
+    angle_deadband_deg: 1.0
     invert_angular: false

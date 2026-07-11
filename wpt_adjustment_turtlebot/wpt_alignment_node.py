@@ -13,6 +13,7 @@ import yaml
 
 from .controller_math import (
     AlignmentState,
+    AlignmentError,
     TagPairObservation,
     TagObservation,
     TargetPoseInImage,
@@ -21,9 +22,14 @@ from .controller_math import (
     compute_alignment_error,
     compute_pair_alignment_error,
     compute_pair_observation,
+    blend_marker_and_line_cmd,
+    block_reverse_linear_cmd,
     is_aligned,
+    is_undershoot_aligned,
 )
 from .tag_layout import coil_pair_ids, four_coil_pair_ids, head_tag_id, station_pair_ids
+from .line_detection import LineDetector, LineObservation
+from .sensor_fusion import ErrorEstimate, ErrorKalmanFilter
 
 try:
     import rclpy
@@ -151,6 +157,19 @@ class WptAlignmentNode(Node):
         self._search_phase = "pause"
         self._search_phase_until = 0.0
         self.detector = AprilTagDetector(self.config["apriltag"].get("family", "tag36h11"))
+        self.line_detector = self._create_line_detector()
+        fusion_cfg = self.config.get("fusion", {})
+        self.marker_filter = ErrorKalmanFilter(
+            process_variance=float(fusion_cfg.get("marker_process_variance", 1.0)),
+            measurement_variance=float(fusion_cfg.get("marker_measurement_variance", 4.0)),
+        )
+        self.line_filter = ErrorKalmanFilter(
+            process_variance=float(fusion_cfg.get("line_process_variance", 1.0)),
+            measurement_variance=float(fusion_cfg.get("line_measurement_variance", 8.0)),
+        )
+        self.latest_line_observation: LineObservation | None = None
+        self.latest_line_estimate: ErrorEstimate | None = None
+        self._line_missed_frames = 999999
         self.get_logger().info(f"AprilTag backend: {self.detector.backend}")
         self.get_logger().info(f"layout_mode={self.layout_mode} target={self._target_name_for_log()}")
         self.cameras = self._open_cameras()
@@ -187,6 +206,8 @@ class WptAlignmentNode(Node):
 
     def read_all_tags(self) -> list[TagObservation]:
         observations: list[TagObservation] = []
+        self.latest_line_observation = None
+        line_camera_seen = False
         grabbed = {cam_name: cap.grab() for cam_name, cap in self.cameras.items()}
         for cam_name, cap in self.cameras.items():
             if not grabbed.get(cam_name, False):
@@ -196,8 +217,13 @@ class WptAlignmentNode(Node):
             if not ok:
                 self.get_logger().warning(f"Camera {cam_name} retrieve failed")
                 continue
+            if cam_name == self._line_camera_name():
+                line_camera_seen = True
+                self._update_line_observation(frame)
             for det in self.detector.detect(frame):
                 observations.append(TagObservation(det.tag_id, det.center[0], det.center[1], det.angle_deg, det.area_px, cam_name))
+        if self.line_detector is not None and not line_camera_seen:
+            self._miss_line_observation()
         if observations:
             self.last_seen_time = time.monotonic()
             self._log_detected_tags(observations)
@@ -245,7 +271,7 @@ class WptAlignmentNode(Node):
             self._recovering_since = None
             self.active_coil_camera = pair.camera_name
             err = compute_pair_alignment_error(pair, self._target_for(pair.camera_name, pair_name))
-            if is_aligned(err, **self._thresholds("coil")):
+            if self._coil_stop_ready(err):
                 self.stable_count += 1
                 if self.stable_count >= int(self.config["alignment"]["stable_frames_required"]):
                     self._log_pair_alignment(pair_name, pair, err)
@@ -254,7 +280,22 @@ class WptAlignmentNode(Node):
             else:
                 self.stable_count = 0
             self._log_pair_alignment(pair_name, pair, err)
-            cmd = compute_alignment_cmd(err, **self._control_params("coil"))
+            estimate = self.marker_filter.update(
+                x_error=err.x,
+                y_error=err.y,
+                angle_error_deg=err.angle_deg,
+                confidence=1.0,
+            )
+            fused_err = AlignmentError(estimate.x_error, estimate.y_error, estimate.angle_error_deg)
+            marker_cmd = compute_alignment_cmd(fused_err, **self._control_params("coil"))
+            marker_cmd = self._apply_undershoot_velocity_policy(marker_cmd)
+            cmd = blend_marker_and_line_cmd(
+                marker_cmd,
+                self._line_following_cmd(),
+                line_weight=float(self._line_config().get("align_line_weight", 0.25)),
+                max_linear=float(self.config["speed"].get("coil_max_linear", 0.015)),
+                max_angular=float(self.config["speed"].get("coil_max_angular", 0.08)),
+            )
             self._last_cmd = cmd
             return cmd
         if self.state == AlignmentState.FINAL_STOP:
@@ -343,6 +384,9 @@ class WptAlignmentNode(Node):
             return VelocityCommand()
 
         any_marker = self._has_any_pair_marker(obs, pair_name)
+        line_cmd = self._line_following_cmd()
+        if line_cmd is not None and not any_marker:
+            return line_cmd
         burst_linear = float(search_cfg.get("burst_linear", self.config["speed"].get("shelf_entry_linear", 0.03)))
         burst_duration = float(search_cfg.get("burst_duration_sec", 0.6))
         pause_duration = float(search_cfg.get("pause_duration_sec", 0.6))
@@ -378,11 +422,94 @@ class WptAlignmentNode(Node):
         if self._recovering_since is None:
             self._recovering_since = now
         if now - self._recovering_since < reverse_duration:
-            return VelocityCommand(linear_x=-self._last_cmd.linear_x, angular_z=-self._last_cmd.angular_z)
+            return self._pair_loss_recovery_cmd()
         self.active_coil_camera = None
         self._recovering_since = None
         self.state = AlignmentState.SEARCH_COIL
         return VelocityCommand()
+
+    def _pair_loss_recovery_cmd(self) -> VelocityCommand:
+        cmd = VelocityCommand(linear_x=-self._last_cmd.linear_x, angular_z=-self._last_cmd.angular_z)
+        cfg = self._undershoot_stop_config()
+        if not cfg.get("enabled", False) or not cfg.get("block_pair_loss_linear_backoff", True):
+            return cmd
+        return block_reverse_linear_cmd(cmd, forward_linear_sign=int(cfg.get("forward_linear_sign", 1)))
+    def _line_config(self) -> dict[str, Any]:
+        return self.config.get("line_tracking", {})
+
+    def _line_camera_name(self) -> str:
+        return str(self._line_config().get("camera", "front"))
+
+    def _create_line_detector(self) -> LineDetector | None:
+        cfg = self._line_config()
+        if not cfg.get("enabled", False):
+            return None
+        return LineDetector(
+            threshold=int(cfg.get("threshold", 80)),
+            min_area_px=float(cfg.get("min_area_px", 120.0)),
+            roi_top_ratio=float(cfg.get("roi_top_ratio", 0.0)),
+            roi_bottom_ratio=float(cfg.get("roi_bottom_ratio", 1.0)),
+            blur_kernel=int(cfg.get("blur_kernel", 5)),
+        )
+
+    def _update_line_observation(self, frame) -> None:
+        if self.line_detector is None:
+            return
+        obs = self.line_detector.detect(frame)
+        min_confidence = float(self._line_config().get("min_confidence", 0.1))
+        if obs is None or obs.confidence < min_confidence:
+            self._miss_line_observation()
+            return
+        self.latest_line_observation = obs
+        self.latest_line_estimate = self.line_filter.update(
+            x_error=obs.x_error,
+            y_error=0.0,
+            angle_error_deg=obs.angle_error_deg,
+            confidence=obs.confidence,
+        )
+        self._line_missed_frames = 0
+        self.get_logger().info(
+            f"line cam={self._line_camera_name()} center_x={obs.center_x:.1f} "
+            f"x_error={obs.x_error:.2f} angle_error={obs.angle_error_deg:.2f} confidence={obs.confidence:.2f}"
+        )
+
+    def _miss_line_observation(self) -> None:
+        self.latest_line_observation = None
+        self.latest_line_estimate = self.line_filter.predict()
+        self._line_missed_frames += 1
+
+    def _line_following_cmd(self) -> VelocityCommand | None:
+        if self.line_detector is None or self.latest_line_estimate is None:
+            return None
+        cfg = self._line_config()
+        if self._line_missed_frames > int(cfg.get("max_missed_frames", 5)):
+            return None
+        control = self.config.get("control", {}).get("line", {})
+        speed = self.config.get("speed", {})
+        err = AlignmentError(
+            x=self.latest_line_estimate.x_error,
+            y=0.0,
+            angle_deg=self.latest_line_estimate.angle_error_deg,
+        )
+        angular_cmd = compute_alignment_cmd(
+            err,
+            k_y_to_linear=0.0,
+            k_x_to_angular=float(control.get("k_x_to_angular", -0.0012)),
+            k_angle_to_angular=float(control.get("k_angle_to_angular", -0.0030)),
+            max_linear=0.0,
+            max_angular=float(speed.get("line_max_angular", 0.10)),
+            min_linear=0.0,
+            min_angular=float(speed.get("line_min_angular", 0.0)),
+            x_deadband_px=float(control.get("x_deadband_px", 4.0)),
+            y_deadband_px=0.0,
+            angle_deadband_deg=float(control.get("angle_deadband_deg", 1.0)),
+            invert_linear=False,
+            invert_angular=bool(control.get("invert_angular", False)),
+        )
+        return VelocityCommand(
+            linear_x=float(speed.get("line_search_linear", speed.get("shelf_entry_linear", 0.025))),
+            angular_z=angular_cmd.angular_z,
+        )
 
     def _target_for(self, camera: str, tag_key: str) -> TargetPoseInImage:
         if self._is_four_coil_map():
@@ -461,6 +588,29 @@ class WptAlignmentNode(Node):
     def _thresholds(self, kind: str) -> dict[str, float]:
         cfg = self.config["alignment"][kind]
         return {"threshold_x_px": float(cfg["threshold_x_px"]), "threshold_y_px": float(cfg["threshold_y_px"]), "threshold_angle_deg": float(cfg["threshold_angle_deg"])}
+
+    def _undershoot_stop_config(self) -> dict[str, Any]:
+        return self.config.get("alignment", {}).get("undershoot_stop", {})
+
+    def _coil_stop_ready(self, err: AlignmentError) -> bool:
+        cfg = self._undershoot_stop_config()
+        if not cfg.get("enabled", False):
+            return is_aligned(err, **self._thresholds("coil"))
+        coil_thresholds = self._thresholds("coil")
+        return is_undershoot_aligned(
+            err,
+            threshold_x_px=float(cfg.get("threshold_x_px", coil_thresholds["threshold_x_px"])),
+            undershoot_y_px=float(cfg.get("undershoot_y_px", coil_thresholds["threshold_y_px"])),
+            overshoot_y_px=float(cfg.get("overshoot_y_px", 0.0)),
+            threshold_angle_deg=float(cfg.get("threshold_angle_deg", coil_thresholds["threshold_angle_deg"])),
+            approach_y_sign=int(cfg.get("approach_y_sign", -1)),
+        )
+
+    def _apply_undershoot_velocity_policy(self, cmd: VelocityCommand) -> VelocityCommand:
+        cfg = self._undershoot_stop_config()
+        if not cfg.get("enabled", False) or not cfg.get("block_reverse_linear", False):
+            return cmd
+        return block_reverse_linear_cmd(cmd, forward_linear_sign=int(cfg.get("forward_linear_sign", 1)))
 
     def _control_params(self, kind: str) -> dict[str, Any]:
         c = self.config["control"][kind]

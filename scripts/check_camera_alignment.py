@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from wpt_adjustment_turtlebot.line_detection import LineDetector  # noqa: E402
 from wpt_adjustment_turtlebot.controller_math import (  # noqa: E402
     TagObservation,
     TargetPoseInImage,
@@ -53,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-file", default="", help="Optional CSV file for cross-camera pair status.")
     parser.add_argument("--output-dir", default="camera_alignment_check", help="Annotated image output directory.")
     parser.add_argument("--no-save", action="store_true", help="Do not save annotated images.")
+    parser.add_argument("--line-debug", action="store_true", help="Print black tape line detection status for the configured line camera.")
     return parser.parse_args()
 
 
@@ -212,6 +214,30 @@ def annotate(frame, observations: list[TagObservation], required_ids: tuple[int,
     return frame
 
 
+
+def create_line_detector(config: dict) -> LineDetector | None:
+    cfg = config.get("line_tracking", {})
+    if not cfg.get("enabled", False):
+        return None
+    return LineDetector(
+        threshold=int(cfg.get("threshold", 80)),
+        min_area_px=float(cfg.get("min_area_px", 120.0)),
+        roi_top_ratio=float(cfg.get("roi_top_ratio", 0.0)),
+        roi_bottom_ratio=float(cfg.get("roi_bottom_ratio", 1.0)),
+        blur_kernel=int(cfg.get("blur_kernel", 5)),
+    )
+
+
+def report_line(camera_name: str, frame, detector: LineDetector) -> None:
+    obs = detector.detect(frame)
+    if obs is None:
+        print(f"  line camera={camera_name} detected=False")
+        return
+    print(
+        f"  line camera={camera_name} detected=True center_x={obs.center_x:.1f} "
+        f"x_error={obs.x_error:.2f} angle_error={obs.angle_error_deg:.2f} "
+        f"confidence={obs.confidence:.2f} area={obs.area_px:.1f}"
+    )
 def report_camera(
     config: dict,
     detector: AprilTagDetector,
@@ -446,6 +472,8 @@ def main() -> int:
     pair_name = args.pair or str(config["alignment"].get("final_pair", "west_east"))
     required_ids = four_coil_pair_ids(target_coil, pair_name)
     detector = AprilTagDetector(config["apriltag"].get("family", "tag36h11"))
+    line_detector = create_line_detector(config) if args.line_debug else None
+    line_camera = str(config.get("line_tracking", {}).get("camera", "front"))
     try:
         front_cell = parse_grid_cell(args.front_cell)
     except ValueError as exc:
@@ -531,6 +559,8 @@ def main() -> int:
                 else:
                     observations, _pair, aligned = report_camera(config, detector, camera_name, frame, target_coil, pair_name)
                 frame_observations.extend(observations)
+                if line_detector is not None and camera_name == line_camera:
+                    report_line(camera_name, frame, line_detector)
                 if save_images:
                     annotated = annotate(frame.copy(), observations, required_ids, aligned)
                     out = output_dir / f"{camera_name}_frame_{frame_index}.jpg"
