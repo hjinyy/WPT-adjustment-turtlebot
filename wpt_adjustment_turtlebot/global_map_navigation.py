@@ -214,11 +214,16 @@ class LegacyGlobalMapNavigator(Node):
         coil_number = max(counts, key=counts.get)
         return f"coil_{coil_number}", tag_ids
 
-    def _report_line_visibility(self, line_seen: bool) -> None:
+    def _report_line_visibility(self, line_seen: bool, *, marker_visible: bool = False) -> None:
         if self._line_seen is line_seen:
             return
         self._line_seen = line_seen
-        message = "front line acquired; following line" if line_seen else "front line lost; robot stopped"
+        if line_seen:
+            message = "front line acquired; following line"
+        elif marker_visible:
+            message = "front line occluded by marker; continuing with last steering"
+        else:
+            message = "front line lost; robot stopped"
         self.get_logger().info(f"[wpt] {message}")
         self.run_log.event(message)
 
@@ -283,7 +288,6 @@ class LegacyGlobalMapNavigator(Node):
             self.get_logger().info(f"[wpt] {message}")
             self.run_log.event(message)
 
-        tag_ids = [det.tag_id for det in self.latest_detections]
         tag_centers = [(det.tag_id, det.center[0]) for det in self.latest_detections]
         self.route_guide.update_turn_direction(tag_ids)
 
@@ -313,11 +317,13 @@ class LegacyGlobalMapNavigator(Node):
 
         if line_seen:
             self.last_route_line_angular = line_angular
+            self.state = "FOLLOW_LINE"
+        elif marker_visible:
+            self.state = "MARKER_OCCLUDES_LINE"
         cmd = VelocityCommand(
             linear_x=float(self.map_cfg.get("route_linear", 0.03)),
             angular_z=self.last_route_line_angular,
         )
-        self.state = "FOLLOW_LINE"
         self.publish(cmd)
         self._control_cycle_started = time.perf_counter()
         now = time.monotonic()
@@ -661,12 +667,14 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
             return
 
         _measured, line_angular, line_seen = self.capture_observation()
-        self._report_line_visibility(line_seen)
+        tag_ids = [det.tag_id for det in self.latest_detections]
+        marker_visible = bool(tag_ids)
+        self._report_line_visibility(line_seen, marker_visible=marker_visible)
 
-        # A missing front line is a hard safety stop.  Do not fall through to
-        # ACQUIRE_ROUTE/FOLLOW_LINE, which would otherwise publish the previous
-        # linear command after logging that the robot stopped.
-        if not line_seen and self.state != "ALIGN_COIL":
+        # A front marker can cover the black tape in the route ROI.  Keep
+        # moving with the last valid line steering while any marker is visible;
+        # only a simultaneous loss of both signals is a hard safety stop.
+        if not line_seen and not marker_visible and self.state != "ALIGN_COIL":
             self.state = "LINE_LOST"
             self.publish(VelocityCommand())
             return
@@ -708,7 +716,6 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
             self.get_logger().info(f"[wpt] {message}")
             self.run_log.event(message)
 
-        tag_ids = [det.tag_id for det in self.latest_detections]
         tag_centers = [(det.tag_id, det.center[0]) for det in self.latest_detections]
         self.route_guide.update_turn_direction(tag_ids)
 
@@ -738,9 +745,11 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
 
         if line_seen:
             self.last_route_line_angular = line_angular
+            self.state = "FOLLOW_LINE"
+        elif marker_visible:
+            self.state = "MARKER_OCCLUDES_LINE"
         cmd = VelocityCommand(
             linear_x=float(self.map_cfg.get("route_linear", 0.03)),
             angular_z=self.last_route_line_angular,
         )
-        self.state = "FOLLOW_LINE"
         self.publish(cmd)
