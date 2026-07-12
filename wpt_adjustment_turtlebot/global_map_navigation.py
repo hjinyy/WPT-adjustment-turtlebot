@@ -646,29 +646,30 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
     def step(self) -> None:
         self._control_cycle_started = time.perf_counter()
         now = time.monotonic()
-        dt = max(1e-3, now - self.last_step_time)
         self.last_step_time = now
         if not self.started:
             self.publish(VelocityCommand())
             return
-        measured, line_angular, line_seen = self.capture_observation()
-        marker_seen = bool(self.latest_detections)
-        pose = measured
-        if measured is not None:
-            self.last_pose_time = now
-        elif self.pose_filter.pose is not None:
-            linear = self.odom_linear_x if self.odom_linear_x is not None else self.last_cmd.linear_x
-            angular = self.odom_angular_z if self.odom_angular_z is not None else self.last_cmd.angular_z
-            pose = self.pose_filter.predict(linear_m_s=linear, angular_rad_s=angular, dt_s=dt)
-            self.latest_filtered_pose = pose
+
+        _measured, line_angular, line_seen = self.capture_observation()
+        self._report_line_visibility(line_seen)
+
         if self.route is None:
-            if pose is None:
-                self.state = "LOCALIZE"
-                self.publish(VelocityCommand(angular_z=float(self.map_cfg.get("scan_angular", 0.10))))
-                return
             from .global_map import expected_route_marker_ids
-            from .global_route_control import MarkerRouteGuide, NavigationRecoveryPolicy
-            start_coil = nearest_coil(pose.x_m, pose.y_m)
+            from .global_route_control import MarkerRouteGuide
+
+            start_coil, visible_tag_ids = self._visible_start_coil()
+            if start_coil is None:
+                self.state = "WAIT_FOR_START_MARKER"
+                self.publish(VelocityCommand())
+                return
+            if start_coil == self.target_coil:
+                self.state = "ALIGN_COIL"
+                self.get_logger().info(f"[wpt] start marker {visible_tag_ids}: already at {start_coil}")
+                self.run_log.event(f"start coil={start_coil} markers={visible_tag_ids}")
+                self.publish(self.final_alignment_command(0.0))
+                return
+
             departure_id, goal_id = expected_route_marker_ids(start_coil, self.target_coil)
             self.route = RouteFollower(
                 plan_axis_aligned_route(start_coil, self.target_coil),
@@ -683,22 +684,24 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
                 image_width=int(self.cfg["cameras"][self.map_cfg.get("camera", "front")].get("width", 320)),
                 center_tolerance_px=float(self.map_cfg.get("route_marker_center_tolerance_px", 45)),
             )
-            self.recovery_policy = NavigationRecoveryPolicy(float(self.map_cfg.get("route_loss_grace_sec", 0.5)))
+            self._start_coil = start_coil
             self.route_started_at = now
-            self.reacquire_started_at = None
             self.last_route_line_angular = 0.0
             self.state = "ACQUIRE_ROUTE"
-            self.run_log.event(f"?? ??: {start_coil} -> {self.target_coil}, ??={departure_id}, ??={goal_id}")
-        tag_ids = [d.tag_id for d in self.latest_detections]
-        tag_centers = [(d.tag_id, d.center[0]) for d in self.latest_detections]
+            message = f"start coil={start_coil} markers={visible_tag_ids}; departure={departure_id}; goal={goal_id}"
+            self.get_logger().info(f"[wpt] {message}")
+            self.run_log.event(message)
+
+        tag_ids = [det.tag_id for det in self.latest_detections]
+        tag_centers = [(det.tag_id, det.center[0]) for det in self.latest_detections]
         self.route_guide.update_turn_direction(tag_ids)
-        target_coil_num = int(self.target_coil[-1])
-        if any(o.tag_id // 10 == target_coil_num for o in self.all_observations):
-            self.target_coil_seen = True
+
         if self.state == "ACQUIRE_ROUTE":
             if self.route_guide.update_departure(tag_centers):
                 self.state = "FOLLOW_LINE"
-                self.recovery_policy.observe(now=now, line_seen=line_seen, marker_seen=marker_seen)
+                message = "departure direction confirmed; line tracing started"
+                self.get_logger().info(f"[wpt] {message}")
+                self.run_log.event(message)
             elif now - self.route_started_at > float(self.map_cfg.get("acquire_timeout_sec", 12.0)):
                 self.state = "ERROR"
                 self.publish(VelocityCommand())
@@ -706,84 +709,22 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
             else:
                 self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("route_max_angular", 0.18))))
                 return
-        if self.route_guide.goal_visible(tag_ids):
+
+        if self.state != "ALIGN_COIL" and self.route_guide.goal_visible(tag_ids):
             self.state = "ALIGN_COIL"
-            self.publish(VelocityCommand())
-            return
+            message = "front goal marker detected; marker alignment started"
+            self.get_logger().info(f"[wpt] {message}")
+            self.run_log.event(message)
+
         if self.state == "ALIGN_COIL":
             self.publish(self.final_alignment_command(0.0))
             return
-        if self.state == "ALIGN_PERPENDICULAR":
-            err = self.compute_perpendicular_error()
-            if err is not None:
-                if abs(err) <= 4.0:
-                    self.state = "REACQUIRE"
-                    self.reacquire_started_at = now
-                    self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("reacquire_angular", 0.10))))
-                    return
-                else:
-                    kp = 0.0005
-                    linear_x = kp * err
-                    max_linear = 0.015
-                    linear_x = max(-max_linear, min(max_linear, linear_x))
-                    self.publish(VelocityCommand(linear_x=linear_x))
-                    return
-            else:
-                if now - self.align_perp_started_at > 6.0:
-                    self.state = "REACQUIRE"
-                    self.reacquire_started_at = now
-                    self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("reacquire_angular", 0.10))))
-                    return
-                else:
-                    self.publish(VelocityCommand(linear_x=0.015))
-                    return
-        self.recovery_policy.observe(now=now, line_seen=line_seen, marker_seen=marker_seen)
-        if self.state != "REACQUIRE" and self.recovery_policy.should_reacquire(now=now):
-            can_reacquire = self.target_coil_seen
-            if not can_reacquire and pose is not None and self.route is not None:
-                target_x, target_y = self.route.waypoints[-1]
-                distance_to_target = math.hypot(target_x - pose.x_m, target_y - pose.y_m)
-                if distance_to_target <= 0.25:
-                    can_reacquire = True
-            if can_reacquire:
-                self.state = "REACQUIRE"
-                self.reacquire_started_at = now
-        if self.state == "REACQUIRE":
-            if line_seen or marker_seen:
-                self.state = "FOLLOW_LINE"
-                self.recovery_policy.observe(now=now, line_seen=line_seen, marker_seen=marker_seen)
-            elif now - self.reacquire_started_at > float(self.map_cfg.get("reacquire_timeout_sec", 12.0)):
-                self.state = "ERROR"
-                self.publish(VelocityCommand())
-                return
-            else:
-                self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("reacquire_angular", 0.10))))
-                return
-        if pose is None:
-            self.state = "ERROR"
-            self.publish(VelocityCommand())
-            return
-        route_cmd, route_complete = self.route.compute(pose, line_angular_z=0.0)
-        if route_complete:
-            if self.target_coil_seen:
-                self.state = "ALIGN_PERPENDICULAR"
-                self.align_perp_started_at = now
-                self.publish(VelocityCommand(linear_x=0.015))
-                return
-            else:
-                self.publish(VelocityCommand(linear_x=float(self.map_cfg.get("route_linear", 0.03))))
-                return
+
         if line_seen:
             self.last_route_line_angular = line_angular
-            cmd = VelocityCommand(linear_x=float(self.map_cfg.get("route_linear", 0.03)), angular_z=line_angular)
-            self.state = "FOLLOW_LINE"
-        elif marker_seen:
-            cmd = route_cmd
-            self.state = "ROTATE_TO_ROUTE" if cmd.linear_x == 0.0 else "FOLLOW_LINE"
-        else:
-            cmd = VelocityCommand(
-                linear_x=float(self.map_cfg.get("route_linear", 0.03)),
-                angular_z=self.last_route_line_angular,
-            )
-            self.state = "FOLLOW_LINE"
+        cmd = VelocityCommand(
+            linear_x=float(self.map_cfg.get("route_linear", 0.03)),
+            angular_z=self.last_route_line_angular,
+        )
+        self.state = "FOLLOW_LINE"
         self.publish(cmd)
