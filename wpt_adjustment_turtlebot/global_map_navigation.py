@@ -237,7 +237,10 @@ class LegacyGlobalMapNavigator(Node):
     def expected_tags_for_cameras(self) -> dict[str, int]:
         if not self.route or len(self.route.waypoints) < 2:
             return {}
-        start_x, start_y = self.route.waypoints[0]
+        # Use the LAST leg direction, not overall start-to-end direction.
+        # For 3-waypoint diagonal routes (e.g. coil_4->coil_1 via coil_3),
+        # the final alignment direction is determined by the last segment.
+        start_x, start_y = self.route.waypoints[-2]
         target_x, target_y = self.route.waypoints[-1]
         
         c = int(self.target_coil[-1])

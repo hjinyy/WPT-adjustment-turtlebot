@@ -23,14 +23,13 @@ cleanup() {
   [[ "$CLEANING" -eq 1 ]] && return
   CLEANING=1
   trap - INT TERM EXIT
-  timeout 2 ros2 service call /wpt_alignment/stop std_srvs/srv/Trigger '{}' >/dev/null 2>&1 || true
-  timeout 2 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}' >/dev/null 2>&1 || true
   kill -TERM -- "-$PID" >/dev/null 2>&1 || true
   for _ in $(seq 1 20); do
     kill -0 -- "-$PID" >/dev/null 2>&1 || break
     sleep 0.1
   done
   kill -KILL -- "-$PID" >/dev/null 2>&1 || true
+  timeout 6 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}' >/dev/null 2>&1 || true
   wait "$PID" 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
