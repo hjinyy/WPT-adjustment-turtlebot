@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-30}"
 source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$ROOT/../../install/setup.bash"
@@ -25,7 +26,7 @@ cleanup() {
   CLEANING=1
   trap - INT TERM EXIT
   echo "[wpt] stopping: publishing zero velocity" >&2
-  timeout 1 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}' >/dev/null 2>&1 || true
+  timeout 2 ros2 topic pub -r 20 --times 20 /cmd_vel geometry_msgs/msg/Twist '{}' >/dev/null 2>&1 || true
   kill -TERM -- "-$PID" >/dev/null 2>&1 || true
   for _ in $(seq 1 20); do
     kill -0 -- "-$PID" >/dev/null 2>&1 || break

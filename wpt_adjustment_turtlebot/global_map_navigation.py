@@ -213,7 +213,7 @@ class LegacyGlobalMapNavigator(Node):
         if self._line_seen is line_seen:
             return
         self._line_seen = line_seen
-        message = "front line acquired; following line" if line_seen else "front line lost; continuing with last steering"
+        message = "front line acquired; following line" if line_seen else "front line lost; robot stopped"
         self.get_logger().info(f"[wpt] {message}")
         self.run_log.event(message)
 
@@ -235,6 +235,10 @@ class LegacyGlobalMapNavigator(Node):
 
         _measured, line_angular, line_seen = self.capture_observation()
         self._report_line_visibility(line_seen)
+        if self.state != "ALIGN_COIL" and not line_seen:
+            self.state = "LINE_LOST"
+            self.publish(VelocityCommand())
+            return
 
         if self.route is None:
             from .global_map import expected_route_marker_ids
