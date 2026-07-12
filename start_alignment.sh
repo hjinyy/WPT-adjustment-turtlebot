@@ -26,7 +26,7 @@ cleanup() {
   CLEANING=1
   trap - INT TERM EXIT
   echo "[wpt] stopping: publishing zero velocity" >&2
-  timeout 2 ros2 topic pub -r 20 --times 20 /cmd_vel geometry_msgs/msg/Twist '{}' >/dev/null 2>&1 || true
+  timeout 3 ros2 topic pub -r 20 --times 30 /cmd_vel geometry_msgs/msg/Twist '{}' >/dev/null 2>&1 || true
   kill -TERM -- "-$PID" >/dev/null 2>&1 || true
   for _ in $(seq 1 20); do
     kill -0 -- "-$PID" >/dev/null 2>&1 || break
@@ -34,11 +34,14 @@ cleanup() {
   done
   kill -KILL -- "-$PID" >/dev/null 2>&1 || true
   wait "$PID" 2>/dev/null || true
+  # Publish again after the navigation process has been terminated, so the
+  # TurtleBot controller receives an explicit final stop command.
+  timeout 3 ros2 topic pub -r 20 --times 30 /cmd_vel geometry_msgs/msg/Twist '{}' >/dev/null 2>&1 || true
 }
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 trap cleanup EXIT
 
-read -r -p "$TARGET_COIL ??? ????? Enter? ????. "
+read -r -p "$TARGET_COIL: press Enter to start. "
 ros2 service call /wpt_alignment/start std_srvs/srv/Trigger '{}'
 wait "$PID"

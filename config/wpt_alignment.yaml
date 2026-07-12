@@ -131,7 +131,7 @@ line_tracking:
   enabled: true
   camera: front
   # Top-down view: top of the front image points in the desired travel direction.
-  threshold: 80
+  threshold: 40
   min_area_px: 120
   min_confidence: 0.10
   roi_top_ratio: 0.0

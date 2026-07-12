@@ -658,6 +658,13 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
         _measured, line_angular, line_seen = self.capture_observation()
         self._report_line_visibility(line_seen)
 
+        # A missing front line is a hard safety stop.  Do not fall through to
+        # ACQUIRE_ROUTE/FOLLOW_LINE, which would otherwise publish the previous
+        # linear command after logging that the robot stopped.
+        if not line_seen and self.state != "ALIGN_COIL":
+            self.state = "LINE_LOST"
+            self.publish(VelocityCommand())
+            return
         if self.route is None:
             from .global_map import expected_route_marker_ids
             from .global_route_control import MarkerRouteGuide
