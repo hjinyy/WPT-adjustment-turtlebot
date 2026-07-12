@@ -11,7 +11,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/config', ['config/wpt_alignment.yaml']),
     ],
-    install_requires=['setuptools', 'PyYAML'],
+    install_requires=['setuptools', 'PyYAML', 'numpy'],
     zip_safe=True,
     maintainer='Hjin',
     maintainer_email='271123352+hjinyy@users.noreply.github.com',
