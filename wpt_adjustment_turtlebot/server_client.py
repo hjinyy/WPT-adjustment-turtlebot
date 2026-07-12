@@ -48,6 +48,13 @@ class ServerClient:
         mode: str | None = None,
         message: str | None = None,
         severity: str = "Info",
+        *,
+        command_id: str | None = None,
+        command_status: str | None = None,
+        phase: str | None = None,
+        heading: str | None = None,
+        linear_velocity: float | None = None,
+        angular_velocity: float | None = None,
     ) -> Any:
         body = {
             "robot_id": self.robot_id,
@@ -61,8 +68,56 @@ class ServerClient:
             "mode": mode,
             "severity": severity,
             "message": message,
+            # 10 Hz telemetry fields (optional; server stores latest per robot)
+            "command_id": command_id,
+            "command_status": command_status,
+            "phase": phase,
+            "heading": heading,
+            "linear_velocity": linear_velocity,
+            "angular_velocity": angular_velocity,
         }
         return self._request("POST", "/api/robot/events", body)
+
+    def post_status(
+        self,
+        *,
+        phase: str,
+        node_id: str | None = None,
+        target_node_id: str | None = None,
+        heading: str | None = None,
+        linear_velocity: float = 0.0,
+        angular_velocity: float = 0.0,
+        alignment_state: str | None = None,
+        detected_tag_ids: list[str] | None = None,
+        charging: bool | None = None,
+        battery_percent: float | None = None,
+        battery_voltage: float | None = None,
+        command_id: str | None = None,
+        command_status: str | None = None,
+    ) -> Any:
+        """Lightweight 10 Hz telemetry heartbeat.
+
+        No `message`/elevated severity, so the server updates the live robot
+        state but does NOT append an event-log row (avoids 10 rows/sec spam).
+        Send discrete milestones (arrival, lock, fault) via post_event with a
+        message instead.
+        """
+        return self.post_event(
+            node_id=node_id,
+            target_node_id=target_node_id,
+            battery_percent=battery_percent,
+            battery_voltage=battery_voltage,
+            charging=charging,
+            alignment_state=alignment_state,
+            detected_tag_ids=detected_tag_ids,
+            mode="Auto",
+            command_id=command_id,
+            command_status=command_status,
+            phase=phase,
+            heading=heading,
+            linear_velocity=linear_velocity,
+            angular_velocity=angular_velocity,
+        )
 
     def next_command(self) -> dict | None:
         """Return the next queued command for this robot, or None if there isn't one.
