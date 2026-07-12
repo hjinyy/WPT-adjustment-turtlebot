@@ -115,7 +115,9 @@ class LegacyGlobalMapNavigator(Node):
                 cap.set(cv2.CAP_PROP_FPS, float(cfg["fps"]))
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.cameras[name] = cap
-        self.cap = self.cameras[self.map_cfg.get("camera", "front")]
+        self.front_camera_name = self.map_cfg.get("camera", "front")
+        self.front_camera_device = int(self.cfg["cameras"][self.front_camera_name]["device"])
+        self.cap = self.cameras[self.front_camera_name]
         self.tag_world_poses = build_tag_world_poses()
 
         self.pub = self.create_publisher(Twist, self.cfg["ros"].get("cmd_vel_topic", "/cmd_vel"), 10)
@@ -125,6 +127,9 @@ class LegacyGlobalMapNavigator(Node):
         self.timer = self.create_timer(1.0 / float(self.cfg["control"].get("loop_hz", 10.0)), self.step)
         message = f"대기 중: target={self.target_coil}, Enter/start 서비스 전에는 이동하지 않습니다"
         self.get_logger().info(message)
+        front_message = f"[wpt] line camera={self.front_camera_name} (/dev/video{self.front_camera_device}), threshold={self.cfg['line_tracking']['threshold']}"
+        self.get_logger().info(front_message)
+        self.run_log.event(front_message)
         self.run_log.event(f"노드 시작 target={self.target_coil} dry_run={self.dry_run}")
         self.run_log.event(f"로그 디렉터리 {self.run_log.run_dir}")
 
