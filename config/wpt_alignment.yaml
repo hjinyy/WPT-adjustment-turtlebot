@@ -82,7 +82,7 @@ coils:
         default: {x: 160, y: 115, angle_deg: 180}
   coil_3:
     label: shelf_2_1
-    markers: {north: 31, south: 32, west: 33, east: 34}
+    markers: {north: 32, south: 31, west: 34, east: 33}
     targets:
       front:
         default: {x: 160, y: 120, angle_deg: 0}
@@ -96,7 +96,7 @@ coils:
         default: {x: 160, y: 115, angle_deg: 180}
   coil_4:
     label: shelf_2_2
-    markers: {north: 41, south: 42, west: 43, east: 44}
+    markers: {north: 42, south: 41, west: 44, east: 43}
     targets:
       front:
         default: {x: 160, y: 120, angle_deg: 0}

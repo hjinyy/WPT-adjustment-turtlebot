@@ -60,9 +60,10 @@ def test_four_coil_map_id_rules():
     assert four_coil_pair_ids("coil_1", "west_east") == (13, 14)
     assert four_coil_pair_ids("coil_1", "north_south") == (11, 12)
     assert four_coil_pair_ids("coil_2", "west_east") == (23, 24)
-    assert four_coil_pair_ids("coil_3", "north_south") == (31, 32)
-    assert four_coil_pair_ids("coil_4", "west_east") == (43, 44)
-    assert decode_four_coil_tag(44) == ("coil_4", "east")
+    assert four_coil_pair_ids("coil_3", "north_south") == (32, 31)
+    assert four_coil_pair_ids("coil_3", "west_east") == (34, 33)
+    assert four_coil_pair_ids("coil_4", "west_east") == (44, 43)
+    assert decode_four_coil_tag(44) == ("coil_4", "west")
     assert decode_four_coil_tag(5) is None
 
 
