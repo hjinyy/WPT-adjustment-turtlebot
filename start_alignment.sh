@@ -11,6 +11,7 @@ if [[ ! "$TARGET_COIL" =~ ^coil_[1-4]$ ]]; then
   exit 2
 fi
 
+echo "[wpt] launching target=$TARGET_COIL dry_run=$DRY_RUN (Ctrl+C stops and sends zero velocity)" >&2
 setsid ros2 run wpt_adjustment_turtlebot global_map_navigation --ros-args \
   -p config_file:="$ROOT/config/wpt_alignment.yaml" \
   -p target_coil:="$TARGET_COIL" \
@@ -23,21 +24,20 @@ cleanup() {
   [[ "$CLEANING" -eq 1 ]] && return
   CLEANING=1
   trap - INT TERM EXIT
+  echo "[wpt] stopping: publishing zero velocity" >&2
+  timeout 1 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}' >/dev/null 2>&1 || true
   kill -TERM -- "-$PID" >/dev/null 2>&1 || true
   for _ in $(seq 1 20); do
     kill -0 -- "-$PID" >/dev/null 2>&1 || break
     sleep 0.1
   done
   kill -KILL -- "-$PID" >/dev/null 2>&1 || true
-  timeout 6 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}' >/dev/null 2>&1 || true
   wait "$PID" 2>/dev/null || true
 }
-trap cleanup INT TERM EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
+trap cleanup EXIT
 
-for _ in $(seq 1 50); do
-  ros2 service list 2>/dev/null | grep -qx '/wpt_alignment/start' && break
-  sleep 0.1
-done
-read -r -p "$TARGET_COIL 이동을 시작하려면 Enter를 누르세요. "
-ros2 service call /wpt_alignment/start std_srvs/srv/Trigger '{}'
+read -r -p "$TARGET_COIL ??? ????? Enter? ????. "
+timeout 10 ros2 service call /wpt_alignment/start std_srvs/srv/Trigger '{}'
 wait "$PID"

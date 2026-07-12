@@ -75,6 +75,9 @@ class LegacyGlobalMapNavigator(Node):
         self._logged_state = None
         self.align_perp_started_at = 0.0
         self.target_coil_seen = False
+        self._line_seen: bool | None = None
+        self._alignment_markers_visible: bool | None = None
+        self._start_coil: str | None = None
 
         fusion = self.cfg.get("fusion", {})
         self.pose_filter = MapPoseEKF(
@@ -137,9 +140,12 @@ class LegacyGlobalMapNavigator(Node):
             response.success, response.message = False, "전역 맵 또는 태그 크기 설정이 올바르지 않습니다"
             return response
         self.started = True
-        self.state = "LOCALIZE"
+        self.state = "WAIT_FOR_START_MARKER"
         self.route = None
         self.stable_count = 0
+        self._line_seen = None
+        self._alignment_markers_visible = None
+        self._start_coil = None
         self.last_pose_time = time.monotonic()
         self.run_log.event(f"주행 시작 target={self.target_coil}")
         response.success, response.message = True, f"현재 위치에서 {self.target_coil} 이동을 시작합니다"
@@ -189,7 +195,121 @@ class LegacyGlobalMapNavigator(Node):
         limit = float(self.cfg["speed"]["line_max_angular"])
         return pose, max(-limit, min(limit, line_angular))
 
+    def _visible_start_coil(self) -> tuple[str | None, list[int]]:
+        tag_ids = [int(obs.tag_id) for obs in getattr(self, "all_observations", [])]
+        if not tag_ids:
+            tag_ids = [int(det.tag_id) for det in self.latest_detections]
+        counts: dict[int, int] = {}
+        for tag_id in tag_ids:
+            coil_number = tag_id // 10
+            if 1 <= coil_number <= 4:
+                counts[coil_number] = counts.get(coil_number, 0) + 1
+        if not counts:
+            return None, tag_ids
+        coil_number = max(counts, key=counts.get)
+        return f"coil_{coil_number}", tag_ids
+
+    def _report_line_visibility(self, line_seen: bool) -> None:
+        if self._line_seen is line_seen:
+            return
+        self._line_seen = line_seen
+        message = "front line acquired; following line" if line_seen else "front line lost; continuing with last steering"
+        self.get_logger().info(f"[wpt] {message}")
+        self.run_log.event(message)
+
+    def _report_alignment_marker_visibility(self, visible: bool) -> None:
+        if self._alignment_markers_visible is visible:
+            return
+        self._alignment_markers_visible = visible
+        message = "alignment markers ready" if visible else "alignment markers incomplete; robot stopped"
+        self.get_logger().info(f"[wpt] {message}")
+        self.run_log.event(message)
+
     def step(self) -> None:
+        self._control_cycle_started = time.perf_counter()
+        now = time.monotonic()
+        self.last_step_time = now
+        if not self.started:
+            self.publish(VelocityCommand())
+            return
+
+        _measured, line_angular, line_seen = self.capture_observation()
+        self._report_line_visibility(line_seen)
+
+        if self.route is None:
+            from .global_map import expected_route_marker_ids
+            from .global_route_control import MarkerRouteGuide
+
+            start_coil, visible_tag_ids = self._visible_start_coil()
+            if start_coil is None:
+                self.state = "WAIT_FOR_START_MARKER"
+                self.publish(VelocityCommand())
+                return
+            if start_coil == self.target_coil:
+                self.state = "ALIGN_COIL"
+                self.get_logger().info(f"[wpt] start marker {visible_tag_ids}: already at {start_coil}")
+                self.run_log.event(f"start coil={start_coil} markers={visible_tag_ids}")
+                self.publish(self.final_alignment_command(0.0))
+                return
+
+            departure_id, goal_id = expected_route_marker_ids(start_coil, self.target_coil)
+            self.route = RouteFollower(
+                plan_axis_aligned_route(start_coil, self.target_coil),
+                linear_speed=float(self.map_cfg.get("route_linear", 0.03)),
+                max_angular=float(self.map_cfg.get("route_max_angular", 0.18)),
+                turn_threshold_deg=float(self.map_cfg.get("heading_threshold_deg", 8.0)),
+                waypoint_tolerance_m=float(self.map_cfg.get("preapproach_radius_m", 0.06)),
+            )
+            self.route_guide = MarkerRouteGuide(
+                departure_id,
+                goal_id,
+                image_width=int(self.cfg["cameras"][self.map_cfg.get("camera", "front")].get("width", 320)),
+                center_tolerance_px=float(self.map_cfg.get("route_marker_center_tolerance_px", 45)),
+            )
+            self._start_coil = start_coil
+            self.route_started_at = now
+            self.last_route_line_angular = 0.0
+            self.state = "ACQUIRE_ROUTE"
+            message = f"start coil={start_coil} markers={visible_tag_ids}; departure={departure_id}; goal={goal_id}"
+            self.get_logger().info(f"[wpt] {message}")
+            self.run_log.event(message)
+
+        tag_ids = [det.tag_id for det in self.latest_detections]
+        tag_centers = [(det.tag_id, det.center[0]) for det in self.latest_detections]
+        self.route_guide.update_turn_direction(tag_ids)
+
+        if self.state == "ACQUIRE_ROUTE":
+            if self.route_guide.update_departure(tag_centers):
+                self.state = "FOLLOW_LINE"
+                message = "departure direction confirmed; line tracing started"
+                self.get_logger().info(f"[wpt] {message}")
+                self.run_log.event(message)
+            elif now - self.route_started_at > float(self.map_cfg.get("acquire_timeout_sec", 12.0)):
+                self.state = "ERROR"
+                self.publish(VelocityCommand())
+                return
+            else:
+                self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("route_max_angular", 0.18))))
+                return
+
+        if self.state != "ALIGN_COIL" and self.route_guide.goal_visible(tag_ids):
+            self.state = "ALIGN_COIL"
+            message = "front goal marker detected; marker alignment started"
+            self.get_logger().info(f"[wpt] {message}")
+            self.run_log.event(message)
+
+        if self.state == "ALIGN_COIL":
+            self.publish(self.final_alignment_command(0.0))
+            return
+
+        if line_seen:
+            self.last_route_line_angular = line_angular
+        cmd = VelocityCommand(
+            linear_x=float(self.map_cfg.get("route_linear", 0.03)),
+            angular_z=self.last_route_line_angular,
+        )
+        self.state = "FOLLOW_LINE"
+        self.publish(cmd)
         self._control_cycle_started = time.perf_counter()
         now = time.monotonic()
         dt = max(1e-3, now - self.last_step_time)
@@ -264,8 +384,9 @@ class LegacyGlobalMapNavigator(Node):
     def final_alignment_command(self, line_angular: float) -> VelocityCommand:
         expected = self.expected_tags_for_cameras()
         if not expected:
-            return VelocityCommand(angular_z=float(self.map_cfg.get("final_scan_angular", 0.05)))
-            
+            self._report_alignment_marker_visibility(False)
+            return VelocityCommand()
+
         all_obs = getattr(self, "all_observations", [])
         
         front_tag = expected["front"]
@@ -278,14 +399,9 @@ class LegacyGlobalMapNavigator(Node):
         
         # Persistence: allow short tag loss before initiating scan
         if left_obs is None or right_obs is None or front_obs is None:
-            self.align_coil_missed_frames += 1
-            if self.align_coil_missed_frames < 10:
-                # Continue without rotation, maintain current command (no angular)
-                return VelocityCommand()
-            # After grace period, fall back to scanning angular as before
-            self.align_coil_missed_frames = 0
-            return VelocityCommand(angular_z=float(self.map_cfg.get("final_scan_angular", 0.05)))
-        # Reset missed frames counter when all tags are seen
+            self._report_alignment_marker_visibility(False)
+            return VelocityCommand()
+        self._report_alignment_marker_visibility(True)
         self.align_coil_missed_frames = 0
             
         target_left_x = 160.0
@@ -386,7 +502,6 @@ class LegacyGlobalMapNavigator(Node):
             control_overrun=self.control_overrun,
         )
         if self.dry_run:
-            self.get_logger().info(f"state={self.state} cmd=({cmd.linear_x:.3f}, {cmd.angular_z:.3f})")
             return
         message = Twist()
         message.linear.x = float(cmd.linear_x)
@@ -435,9 +550,9 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
         return detector
 
     def capture_observation(self) -> tuple[MapPose | None, float, bool]:
+        """Read the front camera for route control; read side cameras only during alignment."""
         capture_started = time.perf_counter()
-        grabbed = {cam_name: cap.grab() for cam_name, cap in self.cameras.items()}
-        ok, frame = self.cap.retrieve()
+        ok, frame = self.cap.read()
         self.frame_capture_ms = (time.perf_counter() - capture_started) * 1000.0
         if not ok:
             self.latest_detections = []
@@ -445,24 +560,32 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
             self.latest_raw_pose = None
             self.latest_line = None
             return None, 0.0, False
+
         tag_started = time.perf_counter()
         self.latest_detections = self.detector.detect(frame)
         self.tag_detect_ms = (time.perf_counter() - tag_started) * 1000.0
-        self.all_observations = []
-        for det in self.latest_detections:
-            self.all_observations.append(
-                TagObservation(det.tag_id, det.center[0], det.center[1], det.angle_deg, det.area_px, "front")
-            )
-        for cam_name in ["left_bottom", "right_bottom"]:
-            if cam_name in self.cameras and grabbed.get(cam_name, False):
-                ok_side, side_frame = self.cameras[cam_name].retrieve()
-                if ok_side:
-                    side_dets = self.detector.detect(side_frame)
-                    for det in side_dets:
-                        self.all_observations.append(
-                            TagObservation(det.tag_id, det.center[0], det.center[1], det.angle_deg, det.area_px, cam_name)
-                        )
-        corners = {d.tag_id: d.corners for d in self.latest_detections if d.tag_id in self.tag_world_poses}
+        self.all_observations = [
+            TagObservation(det.tag_id, det.center[0], det.center[1], det.angle_deg, det.area_px, "front")
+            for det in self.latest_detections
+        ]
+
+        # Side cameras are exclusively for the stationary final-marker alignment.
+        # Keeping them out of the route loop prevents one unavailable side stream
+        # from blocking line following on the front camera.
+        if self.state == "ALIGN_COIL":
+            for cam_name in ("left_bottom", "right_bottom"):
+                cap = self.cameras.get(cam_name)
+                if cap is None:
+                    continue
+                ok_side, side_frame = cap.read()
+                if not ok_side:
+                    continue
+                for det in self.detector.detect(side_frame):
+                    self.all_observations.append(
+                        TagObservation(det.tag_id, det.center[0], det.center[1], det.angle_deg, det.area_px, cam_name)
+                    )
+
+        corners = {det.tag_id: det.corners for det in self.latest_detections if det.tag_id in self.tag_world_poses}
         measured = estimate_map_pose_from_tag_corners(
             corners,
             frame_size=(frame.shape[1], frame.shape[0]),
@@ -472,6 +595,7 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
         self.latest_raw_pose = measured
         if measured is not None:
             self.latest_filtered_pose = self.pose_filter.update([measured])
+
         line_started = time.perf_counter()
         line = self._route_line_detector().detect(frame) if self.cfg["line_tracking"].get("enabled", True) else None
         self.line_detect_ms = (time.perf_counter() - line_started) * 1000.0
@@ -490,7 +614,7 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
     def compute_perpendicular_error(self) -> float | None:
         if not self.route or len(self.route.waypoints) < 2:
             return None
-        start_x, start_y = self.route.waypoints[0]
+        start_x, start_y = self.route.waypoints[-2]
         target_x, target_y = self.route.waypoints[-1]
         is_horizontal = abs(target_x - start_x) >= abs(target_y - start_y)
         
