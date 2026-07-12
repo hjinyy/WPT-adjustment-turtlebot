@@ -32,12 +32,15 @@
 
 코일 사이 경로에는 검정 테이프가 붙어 있고, `scripts/drive_between_coils.py`가 이 구간을 담당합니다 (`wpt_adjustment_turtlebot/coil_transit.py`가 순수 로직).
 
-예: coil_1 → coil_3 (이동 방향 = south)
+**실측 주행 거리** (코일 중심 ↔ 코일 중심): 세로(1↔3, 2↔4) **25.5cm**, 가로(1↔2, 3↔4) **45.3cm** — `coil_transit.py`의 `LEG_DISTANCE_*` 상수. 이 거리를 기준으로 구간을 2단계로 나눕니다.
+
+예: coil_1 → coil_3 (이동 방향 = south, 25.5cm)
 
 1. **head 마커**: 출발 코일에서 이동 방향에 해당하는 마커 — coil_1의 south(12). 로봇은 이 마커를 지나쳐 나가며 이동을 시작합니다.
-2. **라인 추종 + 칼만 보정**: 주행 중 각도가 조금씩 틀어지므로, 양쪽 하부 카메라(left_bottom/right_bottom)가 테이프/측면 마킹을 인식(`line_detection.LineDetector`)하고, 두 관측을 신뢰도 가중으로 합친 뒤 칼만 필터(`sensor_fusion.ErrorKalmanFilter`)로 평활화해서 `angular.z`를 연속 보정합니다. 한쪽 카메라가 잠깐 라인을 놓쳐도 필터의 predict로 이어가고, `line_lost_timeout_sec` 이상 양쪽 다 놓치면 안전 정지합니다.
-3. **정지 조건**: 전방 카메라가 **목표 코일의 이동 방향 마커**(coil_3의 south = 32)를 보는 순간 즉시 정지. 전방 카메라에 반대편 마커가 보인다는 것은 수신 코일이 송신 코일 위에 도달했다는 뜻입니다. 마커 ID가 코일마다 다르므로 출발 코일의 head 마커(12)와 혼동하지 않습니다.
-4. 정지 후 정밀 정합은 기존 pair 로직(`wpt_alignment_node` / `check_camera_alignment.py`)으로 이어갑니다.
+2. **CRUISE (실측 거리의 `transit.cruise_fraction`, 기본 60%)**: 라인 추종 + 칼만 보정으로 순항 속도 주행. 양쪽 하부 카메라(left_bottom/right_bottom)가 테이프를 인식(`line_detection.LineDetector`)하고, 두 관측을 신뢰도 가중으로 합친 뒤 칼만 필터(`sensor_fusion.ErrorKalmanFilter`)로 평활화해서 `angular.z`를 연속 보정합니다 — 각도가 틀어져도 누적되지 않습니다. 주행 거리는 명령 속도 기반 추측항법으로 추정합니다. 한쪽 카메라가 잠깐 라인을 놓쳐도 필터의 predict로 이어가고, `line_lost_timeout_sec` 이상 양쪽 다 놓치면 안전 정지합니다.
+3. **APPROACH (나머지 거리)**: `transit.approach_linear`(기본 0.02 m/s)로 감속해 정밀 도착 조건을 탐색합니다.
+4. **정지 조건 (실험 기반)**: **양쪽 사이드 마커가 보이는 상태에서, 목표 코일의 이동 방향(head) 마커가 전방 카메라에 인식되는 순간 즉시 정지.** south 이동이면 사이드 마커 = coil_3의 west(33)/east(34), head = coil_3의 south(32). head 단독 인식은 코일 중심에 못 미친 스침 인식일 수 있어 정지하지 않고, 사이드 2개가 신선도 창(`side_marker_freshness_sec`, 기본 0.7초) 안에 함께 보여야만 정지합니다 — 실제 실험에서 정합 성공률이 가장 높았던 조합입니다. 마커 ID가 코일마다 다르므로 출발 코일 마커와 혼동하지 않으며, 이 조건은 CRUISE 중에도 검사되어 조기 도착 시에도 안전합니다.
+5. 정지 후 정밀 정합은 기존 pair 로직(`wpt_alignment_node` / `check_camera_alignment.py`)으로 이어갑니다.
 
 대각선 이동(coil_1 → coil_4)은 세로 → 가로 두 구간으로 나뉘며, 구간 사이 90도 회전은 아직 자동화하지 않았습니다(회전 중 라인/마커 가림 리스크) — 회전 후 두 번째 구간을 다시 실행하세요.
 
