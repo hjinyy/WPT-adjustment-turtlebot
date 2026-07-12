@@ -39,5 +39,5 @@ trap 'cleanup; exit 143' TERM
 trap cleanup EXIT
 
 read -r -p "$TARGET_COIL ??? ????? Enter? ????. "
-timeout 10 ros2 service call /wpt_alignment/start std_srvs/srv/Trigger '{}'
+ros2 service call /wpt_alignment/start std_srvs/srv/Trigger '{}'
 wait "$PID"
