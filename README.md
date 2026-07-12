@@ -221,9 +221,6 @@ python3 scripts/check_camera_alignment.py \
 
 (A01/B01/A04/B04는 코일이 없는 "Shelf" 타입 노드라 지금은 다루지 않습니다.)
 
-<img width="1328" height="1106" alt="image" src="https://github.com/user-attachments/assets/7dbd8576-a2ae-4d37-a0e6-e6f5282c15ea" />
-
-
 **태그 번호는 일단 분리해서 관리합니다.** 서버는 워크스페이스별 4방향 태그에 자체 마커 번호를 이미 배정해뒀는데(예: A02 north=3), 우리가 이미 인쇄해서 쓰고 있는 로컬 번호(11~44, shelf*10+position)와 다릅니다. 지금은 로컬 번호로 계속 감지/정합 판단을 하고, 그 결과(node_id, alignment_state)만 서버에 보고합니다. 서버의 마커 번호와 맞추려면 태그를 다시 인쇄해야 하니 나중에 필요할 때 진행하세요.
 
 ### 실행
@@ -236,7 +233,18 @@ python3 scripts/server_agent.py
 python3 scripts/server_agent.py --dry-run
 ```
 
-서버에서 `navigate_to`(예: A02 -> B02) 명령이 오면 이 스크립트가 `shelf_layout.py` 기준으로 오픈루프 이동 후 3x3 그리드로 정합을 확인하고, 결과를 이벤트로 보고하고 명령을 ack합니다. 명령이 없을 때는 약 1초 간격(`--report-interval`)으로 현재 위치/배터리/정합 상태만 보고합니다.
+서버에서 `navigate_to`(예: A02 -> B02) 명령이 오면 이 스크립트가 먼저 현재 보이는 로컬 AprilTag(11~44)로 현재 shelf와 가능한 경우 전방 헤딩을 추정합니다. 헤딩은 태그 ID의 논리 위치뿐 아니라, 코일별로 태그가 실제로 붙은 회전 방향(`tag_navigation.DEFAULT_TAG_STAGE_YAW_DEG`)과 AprilTag 검출 각도도 함께 사용합니다. 그래서 coil_1/2의 north 태그와 coil_3/4의 north 태그가 서로 반대 방향을 향해 붙어 있어도 같은 로봇 자세를 같은 heading으로 해석합니다. 그 다음 `shelf_layout.py` 기준 목표 방향까지 필요한 회전량을 계산하고, 코일 중심 4개를 잇는 검정 전기테이프 직사각형 라인을 전방 카메라로 추종합니다. 라인트레이싱 중에는 라인 중심이 전방 카메라 3x3 grid의 2열에 들어오는지 계속 로그로 확인합니다.
+
+목표 코일 끝부분에서는 측면 카메라의 `west/east` 태그 2개와 전방 카메라의 지정 태그 1개가 지정 grid cell에 들어오면 즉시 정지하고 `Locked`로 보고합니다. 결과는 이벤트로 보고하고 명령을 ack합니다. 명령이 없을 때는 약 1초 간격(`--report-interval`)으로 현재 위치/배터리/정합 상태만 보고합니다.
+
+전방 카메라에서 태그가 보이지 않아 헤딩을 추정할 수 없으면 `--start-heading-deg` 값을 fallback으로 씁니다. 라인트레이싱 대신 예전 시간 기반 이동 + pair 미세 정합으로 돌리고 싶으면 `--skip-line-tracing`을 붙이면 됩니다.
+
+서버 명령 없이 라인트레이싱 주행만 한 번 테스트하려면 `--once-to-shelf`를 씁니다.
+
+```bash
+python3 scripts/server_agent.py --start-shelf 1 --start-heading-deg 90 --once-to-shelf 3 --dry-run
+python3 scripts/server_agent.py --start-shelf 1 --start-heading-deg 90 --once-to-shelf 3
+```
 
 **확인 필요**: `commands/next` 응답의 명령 ID 필드명(`id`/`command_id` 등)을 서버 소스나 실제 응답으로 아직 직접 확인하지 못했습니다 (`server_agent.py`가 접속 시점에 tserver가 네트워크에서 잠깐 응답이 없었습니다). 두 필드명 모두 시도하도록 방어적으로 짜뒀지만, 실제로 서버와 붙여보고 ack가 제대로 가는지 꼭 확인하세요.
 
