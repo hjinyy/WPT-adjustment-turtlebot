@@ -37,3 +37,21 @@ def test_missing_line_returns_none_instead_of_false_zero():
     detector = LineDetector(threshold=80, min_area_px=100, roi_top_ratio=0.0, roi_bottom_ratio=1.0)
 
     assert detector.detect(_blank_frame()) is None
+
+
+def test_rejects_large_horizontal_robot_wheel_as_line():
+    frame = _blank_frame()
+    cv2.rectangle(frame, (10, 150), (310, 235), (0, 0, 0), -1)
+
+    detector = LineDetector(
+        threshold=80,
+        min_area_px=100,
+        roi_top_ratio=0.0,
+        roi_bottom_ratio=0.55,
+        roi_left_ratio=0.20,
+        roi_right_ratio=0.80,
+        max_abs_angle_deg=45.0,
+        min_vertical_span_ratio=0.20,
+    )
+
+    assert detector.detect(frame) is None

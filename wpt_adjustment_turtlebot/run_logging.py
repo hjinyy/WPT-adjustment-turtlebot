@@ -30,6 +30,11 @@ TELEMETRY_FIELDS = [
     "cmd_angular_z",
     "odom_linear_x",
     "odom_angular_z",
+    "frame_capture_ms",
+    "tag_detect_ms",
+    "line_detect_ms",
+    "control_cycle_ms",
+    "control_overrun",
 ]
 
 

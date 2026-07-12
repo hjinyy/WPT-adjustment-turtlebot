@@ -45,3 +45,28 @@ def nearest_coil(x_m: float, y_m: float) -> str:
         COIL_CENTERS_M,
         key=lambda name: (COIL_CENTERS_M[name][0] - float(x_m)) ** 2 + (COIL_CENTERS_M[name][1] - float(y_m)) ** 2,
     )
+
+
+def _direction_suffix(from_point: tuple[float, float], to_point: tuple[float, float]) -> int:
+    from_x, from_y = from_point
+    to_x, to_y = to_point
+    if to_x != from_x:
+        return 4 if to_x > from_x else 3
+    if to_y != from_y:
+        return 1 if to_y > from_y else 2
+    raise ValueError("route endpoints must differ")
+
+
+def expected_route_marker_ids(start_coil: str, target_coil: str) -> tuple[int, int]:
+    """Return the departure and final-leg marker ids for an axis-aligned route."""
+    if start_coil == target_coil:
+        raise ValueError("start and target coils must differ")
+    start = COIL_CENTERS_M[start_coil]
+    target = COIL_CENTERS_M[target_coil]
+    route = plan_axis_aligned_route(start_coil, target_coil)
+    departure_suffix = _direction_suffix(route[0], route[1])
+    goal_suffix = _direction_suffix(route[-2], route[-1])
+    return (
+        int(start_coil[-1]) * 10 + departure_suffix,
+        int(target_coil[-1]) * 10 + goal_suffix,
+    )

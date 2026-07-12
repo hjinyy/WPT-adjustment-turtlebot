@@ -136,6 +136,13 @@ line_tracking:
   min_confidence: 0.10
   roi_top_ratio: 0.0
   roi_bottom_ratio: 1.0
+  route_roi_top_ratio: 0.0
+  route_roi_bottom_ratio: 0.55
+  route_roi_left_ratio: 0.20
+  route_roi_right_ratio: 0.80
+  route_max_abs_angle_deg: 45.0
+  route_min_vertical_span_ratio: 0.20
+  route_min_vertical_aspect_ratio: 1.20
   blur_kernel: 5
   max_missed_frames: 5
   align_line_weight: 0.25
@@ -214,3 +221,8 @@ map_localization:
   route_max_angular: 0.18
   heading_threshold_deg: 8.0
   preapproach_radius_m: 0.06
+  route_marker_center_tolerance_px: 45
+  route_loss_grace_sec: 0.5
+  acquire_timeout_sec: 12.0
+  reacquire_timeout_sec: 12.0
+  reacquire_angular: 0.10

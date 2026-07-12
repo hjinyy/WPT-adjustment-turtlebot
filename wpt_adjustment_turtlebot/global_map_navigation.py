@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover
     Node = object
 
 
-class GlobalMapNavigator(Node):
+class LegacyGlobalMapNavigator(Node):
     def __init__(self) -> None:
         super().__init__("global_map_navigation")
         self.declare_parameter("config_file", "")
@@ -149,7 +149,9 @@ class GlobalMapNavigator(Node):
             self.latest_filtered_pose = None
             self.latest_line = None
             return None, 0.0
+        tag_started = time.perf_counter()
         self.latest_detections = self.detector.detect(frame)
+        self.tag_detect_ms = (time.perf_counter() - tag_started) * 1000.0
         corners = {d.tag_id: d.corners for d in self.latest_detections if d.tag_id in self.tag_world_poses}
         measured = estimate_map_pose_from_tag_corners(
             corners,
@@ -176,6 +178,7 @@ class GlobalMapNavigator(Node):
         return pose, max(-limit, min(limit, line_angular))
 
     def step(self) -> None:
+        self._control_cycle_started = time.perf_counter()
         now = time.monotonic()
         dt = max(1e-3, now - self.last_step_time)
         self.last_step_time = now
@@ -278,6 +281,10 @@ class GlobalMapNavigator(Node):
     def publish(self, cmd: VelocityCommand) -> None:
         if rclpy is not None and not rclpy.ok():
             return
+        cycle_started = getattr(self, "_control_cycle_started", None)
+        self.control_cycle_ms = None if cycle_started is None else (time.perf_counter() - cycle_started) * 1000.0
+        period_ms = 1000.0 / float(self.cfg["control"].get("loop_hz", 10.0))
+        self.control_overrun = self.control_cycle_ms is not None and self.control_cycle_ms > period_ms
         self.last_cmd = cmd
         if self.state != self._logged_state:
             self.run_log.event(f"상태 전환 {self._logged_state} -> {self.state}")
@@ -307,6 +314,11 @@ class GlobalMapNavigator(Node):
             cmd_angular_z=cmd.angular_z,
             odom_linear_x=self.odom_linear_x,
             odom_angular_z=self.odom_angular_z,
+            frame_capture_ms=getattr(self, "frame_capture_ms", None),
+            tag_detect_ms=getattr(self, "tag_detect_ms", None),
+            line_detect_ms=getattr(self, "line_detect_ms", None),
+            control_cycle_ms=self.control_cycle_ms,
+            control_overrun=self.control_overrun,
         )
         if self.dry_run:
             self.get_logger().info(f"state={self.state} cmd=({cmd.linear_x:.3f}, {cmd.angular_z:.3f})")
@@ -334,3 +346,169 @@ def main(args=None) -> None:
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
+
+class GlobalMapNavigator(LegacyGlobalMapNavigator):
+    def _route_line_detector(self) -> LineDetector:
+        detector = getattr(self, "_route_line_detector_instance", None)
+        if detector is not None:
+            return detector
+        cfg = self.cfg["line_tracking"]
+        detector = LineDetector(
+            threshold=int(cfg.get("threshold", 80)),
+            min_area_px=float(cfg.get("min_area_px", 120)),
+            roi_top_ratio=float(cfg.get("route_roi_top_ratio", 0.0)),
+            roi_bottom_ratio=float(cfg.get("route_roi_bottom_ratio", 0.55)),
+            roi_left_ratio=float(cfg.get("route_roi_left_ratio", 0.20)),
+            roi_right_ratio=float(cfg.get("route_roi_right_ratio", 0.80)),
+            max_abs_angle_deg=float(cfg.get("route_max_abs_angle_deg", 45.0)),
+            min_vertical_span_ratio=float(cfg.get("route_min_vertical_span_ratio", 0.20)),
+            min_vertical_aspect_ratio=float(cfg.get("route_min_vertical_aspect_ratio", 1.2)),
+            blur_kernel=int(cfg.get("blur_kernel", 5)),
+        )
+        self._route_line_detector_instance = detector
+        return detector
+
+    def capture_observation(self) -> tuple[MapPose | None, float, bool]:
+        capture_started = time.perf_counter()
+        ok, frame = self.cap.read()
+        self.frame_capture_ms = (time.perf_counter() - capture_started) * 1000.0
+        if not ok:
+            self.latest_detections = []
+            self.latest_raw_pose = None
+            self.latest_line = None
+            return None, 0.0, False
+        tag_started = time.perf_counter()
+        self.latest_detections = self.detector.detect(frame)
+        self.tag_detect_ms = (time.perf_counter() - tag_started) * 1000.0
+        corners = {d.tag_id: d.corners for d in self.latest_detections if d.tag_id in self.tag_world_poses}
+        measured = estimate_map_pose_from_tag_corners(
+            corners,
+            frame_size=(frame.shape[1], frame.shape[0]),
+            tag_world_poses=self.tag_world_poses,
+            tag_size_m=float(self.map_cfg["tag_size_m"]),
+        )
+        self.latest_raw_pose = measured
+        if measured is not None:
+            self.latest_filtered_pose = self.pose_filter.update([measured])
+        line_started = time.perf_counter()
+        line = self._route_line_detector().detect(frame) if self.cfg["line_tracking"].get("enabled", True) else None
+        self.line_detect_ms = (time.perf_counter() - line_started) * 1000.0
+        self.latest_line = line
+        if line is None or line.confidence < float(self.cfg["line_tracking"].get("min_confidence", 0.1)):
+            return measured, 0.0, False
+        control = self.cfg["control"]["line"]
+        x_error = 0.0 if abs(line.x_error) <= float(control.get("x_deadband_px", 0.0)) else line.x_error
+        angle_error = 0.0 if abs(line.angle_error_deg) <= float(control.get("angle_deadband_deg", 0.0)) else line.angle_error_deg
+        angular = float(control["k_x_to_angular"]) * x_error + float(control["k_angle_to_angular"]) * angle_error
+        if bool(control.get("invert_angular", False)):
+            angular = -angular
+        limit = float(self.cfg["speed"]["line_max_angular"])
+        return measured, max(-limit, min(limit, angular)), True
+
+    def step(self) -> None:
+        self._control_cycle_started = time.perf_counter()
+        now = time.monotonic()
+        dt = max(1e-3, now - self.last_step_time)
+        self.last_step_time = now
+        if not self.started:
+            self.publish(VelocityCommand())
+            return
+        measured, line_angular, line_seen = self.capture_observation()
+        marker_seen = bool(self.latest_detections)
+        pose = measured
+        if measured is not None:
+            self.last_pose_time = now
+        elif self.pose_filter.pose is not None:
+            linear = self.odom_linear_x if self.odom_linear_x is not None else self.last_cmd.linear_x
+            angular = self.odom_angular_z if self.odom_angular_z is not None else self.last_cmd.angular_z
+            pose = self.pose_filter.predict(linear_m_s=linear, angular_rad_s=angular, dt_s=dt)
+            self.latest_filtered_pose = pose
+        if self.route is None:
+            if pose is None:
+                self.state = "LOCALIZE"
+                self.publish(VelocityCommand(angular_z=float(self.map_cfg.get("scan_angular", 0.10))))
+                return
+            from .global_map import expected_route_marker_ids
+            from .global_route_control import MarkerRouteGuide, NavigationRecoveryPolicy
+            start_coil = nearest_coil(pose.x_m, pose.y_m)
+            departure_id, goal_id = expected_route_marker_ids(start_coil, self.target_coil)
+            self.route = RouteFollower(
+                plan_axis_aligned_route(start_coil, self.target_coil),
+                linear_speed=float(self.map_cfg.get("route_linear", 0.03)),
+                max_angular=float(self.map_cfg.get("route_max_angular", 0.18)),
+                turn_threshold_deg=float(self.map_cfg.get("heading_threshold_deg", 8.0)),
+                waypoint_tolerance_m=float(self.map_cfg.get("preapproach_radius_m", 0.06)),
+            )
+            self.route_guide = MarkerRouteGuide(
+                departure_id,
+                goal_id,
+                image_width=int(self.cfg["cameras"][self.map_cfg.get("camera", "front")].get("width", 320)),
+                center_tolerance_px=float(self.map_cfg.get("route_marker_center_tolerance_px", 45)),
+            )
+            self.recovery_policy = NavigationRecoveryPolicy(float(self.map_cfg.get("route_loss_grace_sec", 0.5)))
+            self.route_started_at = now
+            self.reacquire_started_at = None
+            self.last_route_line_angular = 0.0
+            self.state = "ACQUIRE_ROUTE"
+            self.run_log.event(f"?? ??: {start_coil} -> {self.target_coil}, ??={departure_id}, ??={goal_id}")
+        tag_ids = [d.tag_id for d in self.latest_detections]
+        tag_centers = [(d.tag_id, d.center[0]) for d in self.latest_detections]
+        self.route_guide.update_turn_direction(tag_ids)
+        if self.state == "ACQUIRE_ROUTE":
+            if self.route_guide.update_departure(tag_centers):
+                self.state = "FOLLOW_LINE"
+                self.recovery_policy.observe(now=now, line_seen=line_seen, marker_seen=marker_seen)
+            elif now - self.route_started_at > float(self.map_cfg.get("acquire_timeout_sec", 12.0)):
+                self.state = "ERROR"
+                self.publish(VelocityCommand())
+                return
+            else:
+                self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("route_max_angular", 0.18))))
+                return
+        if self.route_guide.goal_visible(tag_ids):
+            self.state = "ALIGN_COIL"
+            self.publish(VelocityCommand())
+            return
+        if self.state == "ALIGN_COIL":
+            self.publish(self.final_alignment_command(0.0))
+            return
+        self.recovery_policy.observe(now=now, line_seen=line_seen, marker_seen=marker_seen)
+        if self.state != "REACQUIRE" and self.recovery_policy.should_reacquire(now=now):
+            self.state = "REACQUIRE"
+            self.reacquire_started_at = now
+        if self.state == "REACQUIRE":
+            if line_seen or marker_seen:
+                self.state = "FOLLOW_LINE"
+                self.recovery_policy.observe(now=now, line_seen=line_seen, marker_seen=marker_seen)
+            elif now - self.reacquire_started_at > float(self.map_cfg.get("reacquire_timeout_sec", 12.0)):
+                self.state = "ERROR"
+                self.publish(VelocityCommand())
+                return
+            else:
+                self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("reacquire_angular", 0.10))))
+                return
+        if pose is None:
+            self.state = "ERROR"
+            self.publish(VelocityCommand())
+            return
+        route_cmd, route_complete = self.route.compute(pose, line_angular_z=0.0)
+        if route_complete:
+            self.state = "REACQUIRE"
+            self.reacquire_started_at = now
+            self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("reacquire_angular", 0.10))))
+            return
+        if line_seen:
+            self.last_route_line_angular = line_angular
+            cmd = VelocityCommand(linear_x=float(self.map_cfg.get("route_linear", 0.03)), angular_z=line_angular)
+            self.state = "FOLLOW_LINE"
+        elif marker_seen:
+            cmd = route_cmd
+            self.state = "ROTATE_TO_ROUTE" if cmd.linear_x == 0.0 else "FOLLOW_LINE"
+        else:
+            cmd = VelocityCommand(
+                linear_x=float(self.map_cfg.get("route_linear", 0.03)),
+                angular_z=self.last_route_line_angular,
+            )
+            self.state = "FOLLOW_LINE"
+        self.publish(cmd)
