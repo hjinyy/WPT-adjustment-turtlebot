@@ -65,6 +65,7 @@ class LegacyGlobalMapNavigator(Node):
         self.last_cmd = VelocityCommand()
         self.route: RouteFollower | None = None
         self.stable_count = 0
+        self.align_coil_missed_frames = 0
         self.latest_detections = []
         self.latest_raw_pose = None
         self.latest_filtered_pose = None
@@ -72,6 +73,8 @@ class LegacyGlobalMapNavigator(Node):
         self.odom_linear_x = None
         self.odom_angular_z = None
         self._logged_state = None
+        self.align_perp_started_at = 0.0
+        self.target_coil_seen = False
 
         fusion = self.cfg.get("fusion", {})
         self.pose_filter = MapPoseEKF(
@@ -96,11 +99,20 @@ class LegacyGlobalMapNavigator(Node):
             blur_kernel=int(line_cfg.get("blur_kernel", 5)),
         )
         self.detector = AprilTagDetector(self.cfg["apriltag"].get("family", "tag36h11"))
-        camera = self.cfg["cameras"][self.map_cfg.get("camera", "front")]
-        self.cap = cv2.VideoCapture(int(camera["device"]), cv2.CAP_V4L2)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(camera.get("width", 320)))
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(camera.get("height", 240)))
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.cameras = {}
+        for name, cfg in self.cfg["cameras"].items():
+            cap = cv2.VideoCapture(cfg["device"], cv2.CAP_V4L2)
+            if cfg.get("fourcc"):
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*str(cfg["fourcc"])[:4]))
+            if cfg.get("width"):
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(cfg["width"]))
+            if cfg.get("height"):
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(cfg["height"]))
+            if cfg.get("fps"):
+                cap.set(cv2.CAP_PROP_FPS, float(cfg["fps"]))
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            self.cameras[name] = cap
+        self.cap = self.cameras[self.map_cfg.get("camera", "front")]
         self.tag_world_poses = build_tag_world_poses()
 
         self.pub = self.create_publisher(Twist, self.cfg["ros"].get("cmd_vel_topic", "/cmd_vel"), 10)
@@ -222,20 +234,67 @@ class LegacyGlobalMapNavigator(Node):
         self.state = "ROTATE_TO_ROUTE" if cmd.linear_x == 0.0 else "FOLLOW_ROUTE"
         self.publish(cmd)
 
+    def expected_tags_for_cameras(self) -> dict[str, int]:
+        if not self.route or len(self.route.waypoints) < 2:
+            return {}
+        start_x, start_y = self.route.waypoints[0]
+        target_x, target_y = self.route.waypoints[-1]
+        
+        c = int(self.target_coil[-1])
+        north_id = c * 10 + 1
+        south_id = c * 10 + 2
+        west_id  = c * 10 + 3
+        east_id  = c * 10 + 4
+        
+        is_horizontal = abs(target_x - start_x) >= abs(target_y - start_y)
+        if is_horizontal:
+            if target_x > start_x:  # Eastbound
+                return {"front": east_id, "left_bottom": north_id, "right_bottom": south_id}
+            else:  # Westbound
+                return {"front": west_id, "left_bottom": south_id, "right_bottom": north_id}
+        else:
+            if target_y > start_y:  # Northbound
+                return {"front": north_id, "left_bottom": west_id, "right_bottom": east_id}
+            else:  # Southbound
+                return {"front": south_id, "left_bottom": east_id, "right_bottom": west_id}
+
     def final_alignment_command(self, line_angular: float) -> VelocityCommand:
-        west_id, east_id = four_coil_pair_ids(self.target_coil, "west_east")
-        by_id = {d.tag_id: d for d in self.latest_detections}
-        if west_id not in by_id or east_id not in by_id:
+        expected = self.expected_tags_for_cameras()
+        if not expected:
             return VelocityCommand(angular_z=float(self.map_cfg.get("final_scan_angular", 0.05)))
-
-        def observation(d):
-            return TagObservation(d.tag_id, d.center[0], d.center[1], d.angle_deg, d.area_px, "front")
-
-        pair = compute_pair_observation(observation(by_id[west_id]), observation(by_id[east_id]))
-        target_cfg = self.cfg["coils"][self.target_coil]["targets"]["front"]["default"]
-        error = compute_pair_alignment_error(pair, TargetPoseInImage(**target_cfg))
-        estimate = self.marker_filter.update(x_error=error.x, y_error=error.y, angle_error_deg=error.angle_deg)
-        filtered = AlignmentError(estimate.x_error, estimate.y_error, estimate.angle_error_deg)
+            
+        all_obs = getattr(self, "all_observations", [])
+        
+        front_tag = expected["front"]
+        left_tag = expected["left_bottom"]
+        right_tag = expected["right_bottom"]
+        
+        front_obs = next((o for o in all_obs if o.tag_id == front_tag and o.camera_name == "front"), None)
+        left_obs = next((o for o in all_obs if o.tag_id == left_tag and o.camera_name == "left_bottom"), None)
+        right_obs = next((o for o in all_obs if o.tag_id == right_tag and o.camera_name == "right_bottom"), None)
+        
+        # Persistence: allow short tag loss before initiating scan
+        if left_obs is None or right_obs is None or front_obs is None:
+            self.align_coil_missed_frames += 1
+            if self.align_coil_missed_frames < 10:
+                # Continue without rotation, maintain current command (no angular)
+                return VelocityCommand()
+            # After grace period, fall back to scanning angular as before
+            self.align_coil_missed_frames = 0
+            return VelocityCommand(angular_z=float(self.map_cfg.get("final_scan_angular", 0.05)))
+        # Reset missed frames counter when all tags are seen
+        self.align_coil_missed_frames = 0
+            
+        target_left_x = 160.0
+        target_right_x = 160.0
+        target_front_x = 160.0
+        
+        err_forward = ( (left_obs.center_x - target_left_x) - (right_obs.center_x - target_right_x) ) / 2.0
+        err_yaw = ( (left_obs.center_x - target_left_x) + (right_obs.center_x - target_right_x) ) / 2.0
+        err_lateral = front_obs.center_x - target_front_x
+        
+        filtered = AlignmentError(err_lateral, err_forward, err_yaw)
+        
         stop = self.cfg["alignment"]["undershoot_stop"]
         if is_undershoot_aligned(
             filtered,
@@ -254,8 +313,10 @@ class LegacyGlobalMapNavigator(Node):
                 return VelocityCommand()
         else:
             self.stable_count = 0
+            
         control = self.cfg["control"]["coil"]
         speed = self.cfg["speed"]
+        
         marker_cmd = compute_alignment_cmd(
             filtered,
             k_y_to_linear=float(control["k_y_to_linear"]),
@@ -269,6 +330,7 @@ class LegacyGlobalMapNavigator(Node):
             y_deadband_px=float(control["y_deadband_px"]),
             angle_deadband_deg=float(control["angle_deadband_deg"]),
         )
+        
         cmd = blend_marker_and_line_cmd(
             marker_cmd,
             VelocityCommand(angular_z=line_angular),
@@ -371,16 +433,32 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
 
     def capture_observation(self) -> tuple[MapPose | None, float, bool]:
         capture_started = time.perf_counter()
-        ok, frame = self.cap.read()
+        grabbed = {cam_name: cap.grab() for cam_name, cap in self.cameras.items()}
+        ok, frame = self.cap.retrieve()
         self.frame_capture_ms = (time.perf_counter() - capture_started) * 1000.0
         if not ok:
             self.latest_detections = []
+            self.all_observations = []
             self.latest_raw_pose = None
             self.latest_line = None
             return None, 0.0, False
         tag_started = time.perf_counter()
         self.latest_detections = self.detector.detect(frame)
         self.tag_detect_ms = (time.perf_counter() - tag_started) * 1000.0
+        self.all_observations = []
+        for det in self.latest_detections:
+            self.all_observations.append(
+                TagObservation(det.tag_id, det.center[0], det.center[1], det.angle_deg, det.area_px, "front")
+            )
+        for cam_name in ["left_bottom", "right_bottom"]:
+            if cam_name in self.cameras and grabbed.get(cam_name, False):
+                ok_side, side_frame = self.cameras[cam_name].retrieve()
+                if ok_side:
+                    side_dets = self.detector.detect(side_frame)
+                    for det in side_dets:
+                        self.all_observations.append(
+                            TagObservation(det.tag_id, det.center[0], det.center[1], det.angle_deg, det.area_px, cam_name)
+                        )
         corners = {d.tag_id: d.corners for d in self.latest_detections if d.tag_id in self.tag_world_poses}
         measured = estimate_map_pose_from_tag_corners(
             corners,
@@ -405,6 +483,38 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
             angular = -angular
         limit = float(self.cfg["speed"]["line_max_angular"])
         return measured, max(-limit, min(limit, angular)), True
+
+    def compute_perpendicular_error(self) -> float | None:
+        if not self.route or len(self.route.waypoints) < 2:
+            return None
+        start_x, start_y = self.route.waypoints[0]
+        target_x, target_y = self.route.waypoints[-1]
+        is_horizontal = abs(target_x - start_x) >= abs(target_y - start_y)
+        
+        target_coil_num = int(self.target_coil[-1])
+        if is_horizontal:
+            perp1, perp2 = target_coil_num * 10 + 1, target_coil_num * 10 + 2
+            direction_sign = 1.0 if target_x > start_x else -1.0
+        else:
+            perp1, perp2 = target_coil_num * 10 + 3, target_coil_num * 10 + 4
+            direction_sign = 1.0 if target_y > start_y else -1.0
+            
+        left_obs = next((o for o in self.all_observations if o.tag_id in (perp1, perp2) and o.camera_name == "left_bottom"), None)
+        right_obs = next((o for o in self.all_observations if o.tag_id in (perp1, perp2) and o.camera_name == "right_bottom"), None)
+        
+        offset_left = (left_obs.center_x - 160.0) if left_obs else None
+        offset_right = (160.0 - right_obs.center_x) if right_obs else None
+        
+        if offset_left is not None and offset_right is not None:
+            err = (offset_left + offset_right) / 2.0
+        elif offset_left is not None:
+            err = offset_left
+        elif offset_right is not None:
+            err = offset_right
+        else:
+            return None
+            
+        return err * direction_sign
 
     def step(self) -> None:
         self._control_cycle_started = time.perf_counter()
@@ -455,6 +565,9 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
         tag_ids = [d.tag_id for d in self.latest_detections]
         tag_centers = [(d.tag_id, d.center[0]) for d in self.latest_detections]
         self.route_guide.update_turn_direction(tag_ids)
+        target_coil_num = int(self.target_coil[-1])
+        if any(o.tag_id // 10 == target_coil_num for o in self.all_observations):
+            self.target_coil_seen = True
         if self.state == "ACQUIRE_ROUTE":
             if self.route_guide.update_departure(tag_centers):
                 self.state = "FOLLOW_LINE"
@@ -473,10 +586,41 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
         if self.state == "ALIGN_COIL":
             self.publish(self.final_alignment_command(0.0))
             return
+        if self.state == "ALIGN_PERPENDICULAR":
+            err = self.compute_perpendicular_error()
+            if err is not None:
+                if abs(err) <= 4.0:
+                    self.state = "REACQUIRE"
+                    self.reacquire_started_at = now
+                    self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("reacquire_angular", 0.10))))
+                    return
+                else:
+                    kp = 0.0005
+                    linear_x = kp * err
+                    max_linear = 0.015
+                    linear_x = max(-max_linear, min(max_linear, linear_x))
+                    self.publish(VelocityCommand(linear_x=linear_x))
+                    return
+            else:
+                if now - self.align_perp_started_at > 6.0:
+                    self.state = "REACQUIRE"
+                    self.reacquire_started_at = now
+                    self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("reacquire_angular", 0.10))))
+                    return
+                else:
+                    self.publish(VelocityCommand(linear_x=0.015))
+                    return
         self.recovery_policy.observe(now=now, line_seen=line_seen, marker_seen=marker_seen)
         if self.state != "REACQUIRE" and self.recovery_policy.should_reacquire(now=now):
-            self.state = "REACQUIRE"
-            self.reacquire_started_at = now
+            can_reacquire = self.target_coil_seen
+            if not can_reacquire and pose is not None and self.route is not None:
+                target_x, target_y = self.route.waypoints[-1]
+                distance_to_target = math.hypot(target_x - pose.x_m, target_y - pose.y_m)
+                if distance_to_target <= 0.25:
+                    can_reacquire = True
+            if can_reacquire:
+                self.state = "REACQUIRE"
+                self.reacquire_started_at = now
         if self.state == "REACQUIRE":
             if line_seen or marker_seen:
                 self.state = "FOLLOW_LINE"
@@ -494,10 +638,14 @@ class GlobalMapNavigator(LegacyGlobalMapNavigator):
             return
         route_cmd, route_complete = self.route.compute(pose, line_angular_z=0.0)
         if route_complete:
-            self.state = "REACQUIRE"
-            self.reacquire_started_at = now
-            self.publish(VelocityCommand(angular_z=self.route_guide.rotation_sign * float(self.map_cfg.get("reacquire_angular", 0.10))))
-            return
+            if self.target_coil_seen:
+                self.state = "ALIGN_PERPENDICULAR"
+                self.align_perp_started_at = now
+                self.publish(VelocityCommand(linear_x=0.015))
+                return
+            else:
+                self.publish(VelocityCommand(linear_x=float(self.map_cfg.get("route_linear", 0.03))))
+                return
         if line_seen:
             self.last_route_line_angular = line_angular
             cmd = VelocityCommand(linear_x=float(self.map_cfg.get("route_linear", 0.03)), angular_z=line_angular)

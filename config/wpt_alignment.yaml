@@ -168,9 +168,9 @@ control:
     k_y_to_linear: -0.00025
     k_x_to_angular: -0.0009
     k_angle_to_angular: -0.0025
-    x_deadband_px: 3
-    y_deadband_px: 3
-    angle_deadband_deg: 0.8
+    x_deadband_px: 2.0
+    y_deadband_px: 1.0
+    angle_deadband_deg: 0.5
     invert_linear: false
     invert_angular: false
   line:
@@ -222,7 +222,7 @@ map_localization:
   heading_threshold_deg: 8.0
   preapproach_radius_m: 0.06
   route_marker_center_tolerance_px: 45
-  route_loss_grace_sec: 0.5
+  route_loss_grace_sec: 10.0
   acquire_timeout_sec: 12.0
   reacquire_timeout_sec: 12.0
   reacquire_angular: 0.10
